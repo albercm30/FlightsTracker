@@ -53,7 +53,7 @@ Sin configurar nada funciona en **modo demo**, con un simulador de precios reali
 
 Mira **[DEPLOY.md](DEPLOY.md)**. Estas son las opciones gratuitas:
 
-- **GitHub Actions** (incluido): escaneos y avisos cada 6 horas aunque apagues el PC.
+- **GitHub** (incluido, se configura desde Ajustes): escaneos y avisos cada 6 horas aunque apagues el PC, y una **web pública** en GitHub Pages para verla en el móvil o compartirla.
 - **Oracle Cloud Always Free + Tailscale Funnel**: la web entera online 24/7, gratis.
 - **Tu PC + túnel** (Tailscale o Cloudflare).
 

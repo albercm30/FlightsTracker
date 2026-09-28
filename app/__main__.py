@@ -1,6 +1,7 @@
 """Arranque:
     python -m app          -> interfaz web
     python -m app scan     -> un escaneo único + avisos (cron, GitHub Actions)
+    python -m app export site/  -> web pública de solo lectura (GitHub Pages)
 """
 import json
 import os
@@ -54,6 +55,11 @@ def main():
             with open(summary, "a", encoding="utf-8") as f:
                 f.write(_summary_markdown(res) + "\n")
         sys.exit(1 if res.get("status") == "error" else 0)
+    if len(sys.argv) > 1 and sys.argv[1] == "export":
+        from .export import export_site
+        out = sys.argv[2] if len(sys.argv) > 2 else "site"
+        print(json.dumps(export_site(out, os.environ.get("SITE_TITLE") or None), ensure_ascii=False))
+        return
     app = create_app()
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8000"))

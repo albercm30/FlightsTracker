@@ -4,7 +4,7 @@ La app tiene que estar **encendida las 24 horas** para escanear precios y enviar
 
 | Opción | Coste | Web online 24/7 | Avisos 24/7 | Dificultad |
 |---|---|---|---|---|
-| **0. GitHub Actions** (escaneos y avisos) | **Gratis** | ❌ (la web, en tu PC cuando quieras) | ✅ | ⭐ Fácil |
+| **0. GitHub** (avisos + web pública de solo lectura) | **Gratis** | ✅ web pública (sin ajustes) | ✅ | ⭐ Muy fácil, desde la interfaz |
 | **1. Oracle Cloud Always Free** + Tailscale | **Gratis** | ✅ | ✅ | ⭐⭐ Media |
 | **2. Tu PC + túnel** (Tailscale o Cloudflare) | **Gratis** | Solo con el PC encendido | Solo con el PC encendido | ⭐ Fácil |
 | **3. Railway** | ~5 $/mes | ✅ | ✅ | ⭐ Muy fácil |
@@ -21,30 +21,34 @@ La app tiene que estar **encendida las 24 horas** para escanear precios y enviar
 
 ---
 
-## 0. GitHub Actions: escaneos y avisos gratis, sin servidor
+## 0. GitHub: avisos 24/7 + web pública gratis (recomendado)
 
-GitHub ejecuta cada 6 horas `python -m app scan` en sus máquinas y te manda los avisos por ntfy, Telegram o email. La base de datos se guarda entre ejecuciones, así que hay historial y no se repiten avisos. Es gratis en repositorios **públicos**; en privados tienes 2.000 minutos al mes, y cada escaneo suele durar pocos minutos. Tus tokens van como *secrets* y nadie puede verlos.
+GitHub revisa los precios cada 6 horas con tu PC apagado, te avisa al móvil y publica una **web de solo lectura** en `https://TU_USUARIO.github.io/TU_REPOSITORIO/`, que cualquiera puede abrir en el móvil. La web incluye:
 
-**Opción rápida (recomendada):** en PowerShell, dentro de la carpeta del proyecto y después de hacer `git push`:
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\configurar-github-actions.ps1
-```
-El script instala GitHub CLI si hace falta, te pregunta tus datos, los guarda como secrets y variables, y lanza una prueba. Cada ejecución deja en **Actions** un resumen con los mejores precios.
+- mejores ofertas, calendario y «Mejor día»;
+- explorar y puentes;
+- equipaje y descuento de residente (lo elige cada visitante);
+- enlaces para reservar.
 
-**Opción manual:**
+Es gratis en repositorios **públicos**. Tus tokens se guardan como *secrets* cifrados y **nunca** se publican.
 
-1. En tu repositorio: **Settings → Secrets and variables → Actions**.
-2. En la pestaña **Secrets**, añade:
-   - `TRAVELPAYOUTS_TOKEN`;
-   - `NTFY_TOPIC`, o bien `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`.
-3. En la pestaña **Variables**, añade:
-   - `ORIGINS`, por ejemplo `TCI,LPA,MAD`;
-   - `DESTINATIONS`, por ejemplo `LON,ROM,NYC,BKK,CUN`;
-   - `ENABLE_SCHEDULED_SCAN` = `true`;
-   - opcionales: `TRIP_TYPE` (`rt`, `ow` o `both`), `MIN_NIGHTS`, `MAX_NIGHTS`, `PASSENGERS`, `BAGGAGE`, `RESIDENT_DISCOUNT` (`canarias`), `QUIET_HOURS` (`23-8`) y `TZ` (`Atlantic/Canary`).
-4. En **Actions → Escaneo programado → Run workflow** lánzalo una vez para probar. Después se ejecuta solo.
+**Todo desde la interfaz:** abre tu app local (`iniciar.bat`), ve a **Ajustes → ☁️ Avisos 24/7 y web pública** y sigue los pasos. Solo tendrás que:
 
-Para cambiar destinos, edita la variable `DESTINATIONS`. La web la sigues usando en tu PC (`iniciar.bat`) para buscar y explorar.
+1. Crear un token de GitHub (el panel explica cómo, en 2 minutos) y pegarlo.
+2. Pulsar **Hacer público** si tu repositorio es privado.
+3. Pulsar **Sincronizar con GitHub**. La app sube tus orígenes, destinos, preferencias y claves, activa el horario y crea la web pública.
+4. Pulsar **Probar aviso (demo)** para comprobar que te llega la notificación, y **Escanear ahora en la nube** para el primer escaneo real.
+
+Cada vez que guardes ajustes, la app vuelve a sincronizar sola. Si cambias destinos, pulsa **Sincronizar**.
+
+<details><summary>Alternativa por terminal o manual</summary>
+
+- Script: `powershell -ExecutionPolicy Bypass -File scripts\configurar-github-actions.ps1`
+- Manual: en **Settings → Secrets and variables → Actions** crea:
+  - los secrets `TRAVELPAYOUTS_TOKEN` y `NTFY_TOPIC`;
+  - las variables `ORIGINS`, `DESTINATIONS`, `ENABLE_SCHEDULED_SCAN=true` y `PUBLISH_SITE=true`.
+- Después, en **Settings → Pages**, elige *Source: GitHub Actions*.
+</details>
 
 ## 1. Oracle Cloud Always Free: todo online y gratis
 

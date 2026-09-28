@@ -14,6 +14,7 @@ const LEVEL = { low: ['Precio bajo', 'good'], typical: ['Precio normal', 'neutra
 
 /* ---------- API ---------- */
 async function api(path, opts = {}) {
+  if (window.STATIC) return staticApi(path, opts);
   const o = { headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', ...opts };
   if (o.body && typeof o.body !== 'string') o.body = JSON.stringify(o.body);
   const r = await fetch(path, o);

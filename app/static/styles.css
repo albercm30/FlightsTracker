@@ -506,3 +506,11 @@ details.why summary { cursor: pointer; font-weight: 700; color: var(--brand); fo
 .totline { font-size: .85rem; color: var(--muted); margin-top: -4px; }
 .totline b { color: var(--ink); }
 .ac-list { min-width: 300px; }
+.csteps { display: grid; gap: 10px; }
+.cstep { display: grid; grid-template-columns: 24px 1fr; gap: 10px; align-items: start; }
+.cstep > i { width: 24px; height: 24px; border-radius: 50%; display: grid; place-items: center; font-style: normal; font-weight: 900; font-size: .8rem; background: var(--surface-3); color: var(--muted); }
+.cstep.ok > i { background: var(--good-soft); color: var(--good); }
+.cstep.warn > i { background: var(--warn-soft); color: var(--warn); }
+.cstep code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: .82rem; }
+.alert .meta .datechip { white-space: normal; }
+.alert > div { min-width: 0; }

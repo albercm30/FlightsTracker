@@ -22,6 +22,11 @@ concurrency:
   group: scan
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  pages: write       # publicar la web pública en GitHub Pages
+  id-token: write
+
 jobs:
   scan:
     if: github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULED_SCAN == 'true'
@@ -89,9 +94,33 @@ jobs:
           TZ: ${{ vars.TZ || 'Europe/Madrid' }}
         run: python -m app scan
 
+      - name: Generar web pública
+        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo
+        env:
+          SITE_TITLE: ${{ vars.SITE_TITLE }}
+        run: python -m app export site
+
+      - name: Subir web pública
+        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
       - name: Guardar base de datos
         if: always() && hashFiles('data/flights.db') != ''
         uses: actions/cache/save@v4
         with:
           path: data/flights.db
           key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
+
+  # Publica la web de solo lectura en https://<usuario>.github.io/<repositorio>/
+  deploy:
+    needs: scan
+    if: vars.PUBLISH_SITE == 'true' && !inputs.demo
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

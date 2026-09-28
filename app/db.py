@@ -144,6 +144,10 @@ DEFAULT_SETTINGS = {
     "resident_discount": "",       # "" | canarias | baleares  (75 % en vuelos nacionales)
     "quiet_hours": "",             # p. ej. "23-8": sin avisos por la noche (se envían después)
     "timezone": "Europe/Madrid",
+    "github_token": "",
+    "github_repo": "",
+    "publish_site": True,
+    "site_title": "Chollos de vuelos",
     "telegram_bot_token": "",
     "telegram_chat_id": "",
     "ntfy_server": "https://ntfy.sh",
@@ -186,7 +190,7 @@ ENV_MAP = {
     "min_days_ahead": "MIN_DAYS_AHEAD",
 }
 
-SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password"}
+SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password", "github_token"}
 CHOICES = {
     "trip_type": {"ow", "rt", "both"},
     "baggage": {"personal", "cabin", "checked", "cabin_checked"},

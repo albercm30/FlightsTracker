@@ -11,7 +11,7 @@ from datetime import date, timedelta
 
 from flask import Flask, Response, jsonify, redirect, request, send_from_directory, session
 
-from . import airlines, catalog, db, holidays, notifier, scheduler, tracker
+from . import airlines, catalog, cloud, db, holidays, notifier, scheduler, tracker
 from .providers import booking_links, get_provider, serpapi
 
 __version__ = "2.0.0"
@@ -483,6 +483,34 @@ def create_app(db_path: str = None, start_scheduler: bool = None) -> Flask:
     def delete_watch(wid):
         db.execute("DELETE FROM watches WHERE id=?", (wid,))
         return "", 204
+
+    # ---------------- nube: GitHub Actions + web pública ----------------
+    def _cloud(fn, *a):
+        try:
+            return jsonify(fn(*a))
+        except cloud.CloudError as e:
+            return jsonify({"error": str(e)}), 400
+
+    @app.get("/api/cloud/status")
+    def cloud_status():
+        return jsonify(cloud.status())
+
+    @app.post("/api/cloud/sync")
+    def cloud_sync():
+        data = request.get_json(force=True, silent=True) or {}
+        return _cloud(cloud.sync, bool(data.get("schedule", True)))
+
+    @app.post("/api/cloud/run")
+    def cloud_run():
+        return _cloud(cloud.run_now, bool((request.get_json(force=True, silent=True) or {}).get("demo")))
+
+    @app.post("/api/cloud/schedule")
+    def cloud_schedule():
+        return _cloud(cloud.set_schedule, bool((request.get_json(force=True, silent=True) or {}).get("enabled")))
+
+    @app.post("/api/cloud/make-public")
+    def cloud_public():
+        return _cloud(cloud.make_public)
 
     # ---------------- alertas ----------------
     @app.get("/api/alerts")

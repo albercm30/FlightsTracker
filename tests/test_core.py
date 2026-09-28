@@ -299,6 +299,128 @@ class ExtrasTest(unittest.TestCase):
         self.assertTrue(all(len(p["t"]) < 60 for p in a["points"]))
 
 
+class CloudTest(unittest.TestCase):
+    class FakeGH:
+        """Imita la API de GitHub lo justo para probar cloud.py."""
+        def __init__(self, private=False, workflow=True):
+            self.vars, self.secrets, self.calls = {}, {}, []
+            self.private, self.workflow, self.pages = private, workflow, None
+
+        def request(self, method, url, headers=None, timeout=None, json=None, params=None):
+            from unittest import mock
+            path = url.split("/repos/alber/Flights", 1)[1]
+            self.calls.append((method, path))
+            r = mock.Mock()
+            r.status_code, body = 200, {}
+            if method == "GET" and path == "":
+                body = {"private": self.private, "default_branch": "main", "html_url": "https://github.com/alber/Flights"}
+            elif path == "/actions/workflows/scan.yml":
+                r.status_code, body = (200, {"state": "active"}) if self.workflow else (404, {})
+            elif path.endswith("/runs"):
+                body = {"workflow_runs": []}
+            elif method == "GET" and path == "/actions/variables":
+                body = {"variables": [{"name": k, "value": v} for k, v in self.vars.items()]}
+            elif method == "GET" and path == "/actions/secrets":
+                body = {"secrets": [{"name": k} for k in self.secrets]}
+            elif path == "/actions/secrets/public-key":
+                body = {"key": "x", "key_id": "1"}
+            elif method == "PUT" and path.startswith("/actions/secrets/"):
+                self.secrets[path.rsplit("/", 1)[1]] = json["encrypted_value"]; r.status_code = 201
+            elif method == "PATCH" and path.startswith("/actions/variables/"):
+                name = path.rsplit("/", 1)[1]
+                if name in self.vars:
+                    self.vars[name] = json["value"]; r.status_code = 204
+                else:
+                    r.status_code = 404
+            elif method == "POST" and path == "/actions/variables":
+                self.vars[json["name"]] = json["value"]; r.status_code = 201
+            elif method == "DELETE" and path.startswith("/actions/variables/"):
+                self.vars.pop(path.rsplit("/", 1)[1], None); r.status_code = 204
+            elif path == "/pages":
+                if method == "GET":
+                    r.status_code, body = (200, self.pages) if self.pages else (404, {})
+                else:
+                    self.pages = {"html_url": "https://alber.github.io/Flights/", "build_type": "workflow"}
+                    r.status_code = 201
+            elif path.endswith("/dispatches"):
+                r.status_code = 204
+            r.json = lambda: body
+            return r
+
+    def setUp(self):
+        from unittest import mock
+        from app import cloud
+        self.tmp = tempfile.TemporaryDirectory()
+        db.init(os.path.join(self.tmp.name, "c.db"))
+        db.update_settings({"github_token": "t", "github_repo": "alber/Flights", "origins": ["TCI"],
+                            "travelpayouts_token": "tp", "ntfy_topic": "vuelos-x"})
+        db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('ROM','Roma',1,'x')")
+        self.p = mock.patch.object(cloud, "encrypt", lambda k, v: "enc:" + v)
+        self.p.start()
+
+    def tearDown(self):
+        self.p.stop()
+        self.tmp.cleanup()
+
+    def test_sync_and_status(self):
+        from app import cloud
+        gh = self.FakeGH()
+        res = cloud.sync(session=gh)
+        self.assertEqual(gh.vars["ORIGINS"], "TCI")
+        self.assertEqual(gh.vars["DESTINATIONS"], "ROM")
+        self.assertEqual(gh.vars["ENABLE_SCHEDULED_SCAN"], "true")
+        self.assertEqual(gh.vars["PUBLISH_SITE"], "true")
+        self.assertEqual(gh.secrets["TRAVELPAYOUTS_TOKEN"], "enc:tp")
+        self.assertIn("NTFY_TOPIC", res["secrets"])
+        self.assertIsNone(res["pages_warning"])
+        st = cloud.status(session=gh)
+        self.assertTrue(st["in_sync"] and st["has_price_token"] and st["pages_enabled"])
+        self.assertEqual(st["pages_url"], "https://alber.github.io/Flights/")
+        cloud.run_now(demo=True, session=gh)
+        self.assertIn(("POST", "/actions/workflows/scan.yml/dispatches"), gh.calls)
+
+    def test_private_repo_and_missing_workflow(self):
+        from app import cloud
+        self.assertIn("privado", cloud.sync(session=self.FakeGH(private=True))["pages_warning"])
+        with self.assertRaises(cloud.CloudError):
+            cloud.sync(session=self.FakeGH(workflow=False))
+
+    def test_detect_repo(self):
+        from app import cloud
+        d = os.path.join(self.tmp.name, "r", ".git")
+        os.makedirs(d)
+        open(os.path.join(d, "config"), "w").write('[remote "origin"]\n\turl = https://github.com/albercm30/FlightsTracker.git\n')
+        self.assertEqual(cloud.detect_repo(os.path.join(self.tmp.name, "r")), "albercm30/FlightsTracker")
+
+
+class ExportTest(unittest.TestCase):
+    def test_export_static_site(self):
+        from app.export import export_site
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ.pop("APP_PASSWORD", None)
+            db.init(os.path.join(tmp, "x.db"))
+            db.update_settings({"origins": ["MAD"], "months_ahead": 2, "trip_type": "rt", "travelpayouts_token": "SECRETO",
+                                "telegram_bot_token": "TG-SECRET"})
+            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('LIS','Lisboa',1,'x')")
+            from app.providers.demo import DemoProvider
+            tracker.run_scan(provider=DemoProvider(), notify=False)
+            os.environ["DB_PATH"] = os.path.join(tmp, "x.db")
+            try:
+                res = export_site(os.path.join(tmp, "site"))
+            finally:
+                os.environ.pop("DB_PATH", None)
+            self.assertEqual(res["routes"], 1)
+            site = os.path.join(tmp, "site")
+            html = open(os.path.join(site, "index.html"), encoding="utf-8").read()
+            self.assertIn("window.STATIC = true", html)
+            self.assertNotIn('src="/static', html)
+            self.assertTrue(os.path.exists(os.path.join(site, "data", "cal", "MAD-LIS-rt.json")))
+            blob = "".join(open(os.path.join(r, f), encoding="utf-8", errors="ignore").read()
+                           for r, _, fs in os.walk(os.path.join(site, "data")) for f in fs)
+            self.assertNotIn("SECRETO", blob)
+            self.assertNotIn("TG-SECRET", blob)
+
+
 class NotifierTest(unittest.TestCase):
     def test_digest_telegram_and_ntfy(self):
         from unittest import mock

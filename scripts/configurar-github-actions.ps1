@@ -15,12 +15,30 @@ function Secreto($texto) {
 }
 
 Titulo "1/5 Comprobando GitHub CLI"
-if (-not (Get-Command gh -ErrorAction SilentlyContinue)) {
-  Write-Host "Falta GitHub CLI. Instalándolo con winget..." -ForegroundColor Yellow
-  winget install --id GitHub.cli -e --accept-source-agreements --accept-package-agreements
-  Write-Host "Cierra y vuelve a abrir PowerShell y ejecuta este script otra vez." -ForegroundColor Yellow
-  exit 1
+function Buscar-Gh {
+  # Recarga el PATH (winget lo actualiza, pero las ventanas ya abiertas no lo ven) y busca gh.exe
+  $env:Path = [Environment]::GetEnvironmentVariable("Path", "Machine") + ";" + [Environment]::GetEnvironmentVariable("Path", "User")
+  if (Get-Command gh -ErrorAction SilentlyContinue) { return $true }
+  $candidatos = @(
+    "$env:ProgramFiles\GitHub CLI\gh.exe",
+    "${env:ProgramFiles(x86)}\GitHub CLI\gh.exe",
+    "$env:LOCALAPPDATA\Programs\GitHub CLI\gh.exe",
+    "$env:LOCALAPPDATA\Microsoft\WinGet\Links\gh.exe"
+  )
+  foreach ($c in $candidatos) {
+    if ($c -and (Test-Path $c)) { $env:Path = (Split-Path $c) + ";" + $env:Path; return $true }
+  }
+  return $false
 }
+if (-not (Buscar-Gh)) {
+  Write-Host "Instalando GitHub CLI con winget..." -ForegroundColor Yellow
+  winget install --id GitHub.cli -e --accept-source-agreements --accept-package-agreements
+  if (-not (Buscar-Gh)) {
+    Write-Host "No encuentro gh.exe. Cierra TODAS las ventanas de PowerShell/VS Code, ábrelas de nuevo y repite." -ForegroundColor Red
+    exit 1
+  }
+}
+Write-Host ("GitHub CLI: " + (gh --version | Select-Object -First 1)) -ForegroundColor Green
 gh auth status 2>$null | Out-Null
 if ($LASTEXITCODE -ne 0) { Write-Host "Inicia sesión en GitHub (se abrirá el navegador)..."; gh auth login --web --git-protocol https }
 

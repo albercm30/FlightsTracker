@@ -7,6 +7,7 @@ function route(force = false) {
   const v = (location.hash.slice(1) || 'home').split('?')[0];
   const name = VIEWS[v] ? v : 'home';
   if (name === 'more') { openMore(); return; }
+  if (!$('#modal').classList.contains('hidden')) closeSheet();
   if (!force && S.view === name && $(`#view-${name}`).dataset.ready) return;
   S.view = name;
   $$('.view').forEach((el) => el.classList.toggle('active', el.id === `view-${name}`));
@@ -20,7 +21,8 @@ function go(view, pending) { if (pending) S.pending = { view, ...pending }; if (
 function openMore() {
   openSheet(`<div class="sh-head"><h2>Más</h2><button class="btn icon ghost close" data-close>${ic('x')}</button></div>
   <div class="sh-body"><div class="list">
-  ${[['holidays', 'sun', 'Puentes y festivos'], ['calendar', 'calendar', 'Calendario de precios'], ['watches', 'eye', 'Vuelos vigilados'], ['destinations', 'star', 'Mis destinos'], ['settings', 'settings', 'Ajustes']]
+  ${(S.static ? [['holidays', 'sun', 'Puentes y festivos'], ['calendar', 'calendar', 'Calendario de precios'], ['settings', 'settings', 'Preferencias']]
+    : [['holidays', 'sun', 'Puentes y festivos'], ['calendar', 'calendar', 'Calendario de precios'], ['watches', 'eye', 'Vuelos vigilados'], ['destinations', 'star', 'Mis destinos'], ['settings', 'settings', 'Ajustes']])
     .map(([v, i, t]) => `<a class="card item" href="#${v}" data-close>${ic(i)}<span class="title">${t}</span></a>`).join('')}
   <button class="card item btn" id="moreTheme" style="justify-content:flex-start;border-radius:var(--r)">${ic('moon')} Cambiar tema</button>
   </div></div>`);
@@ -32,7 +34,9 @@ function openMore() {
 async function refreshStatus() {
   const s = await api('/api/status'); S.status = s;
   const last = s.last_scan;
-  $('#sideStatus').innerHTML = `<div><b>${s.provider === 'demo' ? '🎲 Modo demo' : '✅ Precios reales'}</b></div>
+  $('#sideStatus').innerHTML = S.static
+    ? `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza cada 6 horas</div>`
+    : `<div><b>${s.provider === 'demo' ? '🎲 Modo demo' : '✅ Precios reales'}</b></div>
     <div>Último escaneo: ${last ? ago(last.finished_at || last.started_at) : 'nunca'}</div><div>Próximo: ${until(s.next_run)}</div>`;
   $$('[data-count="alerts"]').forEach((c) => { c.textContent = s.unread_alerts; c.classList.toggle('hidden', !s.unread_alerts); });
   $$('[data-count="watches"]').forEach((c) => { c.textContent = s.watches; c.classList.toggle('hidden', !s.watches); });
@@ -48,6 +52,7 @@ async function refreshStatus() {
 }
 let wasRunning = false;
 setInterval(async () => {
+  if (window.STATIC) return;
   try {
     const s = await refreshStatus();
     if (wasRunning && !s.progress.running) { toast('✅ Escaneo terminado'); if (['home', 'calendar', 'watches', 'alerts'].includes(S.view)) route(true); }
@@ -69,9 +74,9 @@ function monthOptions() {
 }
 function originOptions(sel = 'mine') {
   const own = S.settings.origins || [];
-  const sp = (S.meta.spain_origins || []).map((c) => c.code);
+  const sp = S.static ? [] : (S.meta.spain_origins || []).map((c) => c.code);
   return `<option value="mine" ${sel === 'mine' ? 'selected' : ''}>Mis aeropuertos (${esc(own.join(', ') || '—')})</option>
-    <option value="ES" ${sel === 'ES' ? 'selected' : ''}>Toda España (${sp.length} aeropuertos)</option>
+    ${S.static ? '' : `<option value="ES" ${sel === 'ES' ? 'selected' : ''}>Toda España (${sp.length} aeropuertos)</option>`}
     ${[...new Set([...own, ...sp])].map((c) => `<option value="${c}" ${sel === c ? 'selected' : ''}>${esc(cityName(c))} (${c})</option>`).join('')}`;
 }
 function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) {
@@ -220,13 +225,16 @@ VIEWS.home = async (el) => {
   const s = S.status || await refreshStatus();
   const trips = s.trips; S.homeTrip = S.homeTrip && trips.includes(S.homeTrip) ? S.homeTrip : trips[trips.length - 1];
   el.innerHTML = `
-    ${s.provider === 'demo' ? `<div class="banner info">🎲 <div><b>Modo demo</b> · precios simulados. <a href="#settings">Añade tu token gratis</a> para ver precios reales.</div></div>` : ''}
+    ${s.provider === 'demo' ? (S.static ? '<div class="banner info">🎲 <div><b>Precios simulados</b> · esta web está en modo demostración.</div></div>'
+      : `<div class="banner info">🎲 <div><b>Modo demo</b> · precios simulados. <a href="#settings">Añade tu token gratis</a> para ver precios reales.</div></div>`) : ''}
     <div class="hero"><h1>¿A dónde quieres volar?</h1><p class="sub">El día más barato, en segundos.</p><div id="homeSearch"></div></div>
     <div class="kpis">
       <a class="card kpi" href="#destinations"><span class="ic a">⭐</span><div><div class="v">${s.destinations}</div><div class="l">destinos</div></div></a>
       <a class="card kpi" href="#settings"><span class="ic b">🛫</span><div><div class="v">${s.origins.length}</div><div class="l">aeropuertos</div></div></a>
-      <a class="card kpi" href="#watches"><span class="ic c">👀</span><div><div class="v">${s.watches}</div><div class="l">vigilados</div></div></a>
-      <a class="card kpi" href="#alerts"><span class="ic d">🔔</span><div><div class="v">${s.unread_alerts}</div><div class="l">alertas nuevas</div></div></a>
+      ${S.static ? `<a class="card kpi" href="#calendar"><span class="ic c">🕒</span><div><div class="v" style="font-size:1.05rem">${ago(s.last_scan?.finished_at)}</div><div class="l">actualizado</div></div></a>
+      <a class="card kpi" href="#alerts"><span class="ic d">🔥</span><div><div class="v">${s.quotes.toLocaleString('es-ES')}</div><div class="l">días con precio</div></div></a>`
+      : `<a class="card kpi" href="#watches"><span class="ic c">👀</span><div><div class="v">${s.watches}</div><div class="l">vigilados</div></div></a>
+      <a class="card kpi" href="#alerts"><span class="ic d">🔔</span><div><div class="v">${s.unread_alerts}</div><div class="l">alertas nuevas</div></div></a>`}
     </div>
     <div class="section"><div class="section-head"><h2>🔥 Chollos en tus destinos</h2>
       ${trips.length > 1 ? `<div class="seg" id="homeTrip">${trips.map((t) => `<button data-t="${t}" class="${t === S.homeTrip ? 'on' : ''}">${tripLabel(t)}</button>`).join('')}</div>` : ''}</div>
@@ -235,7 +243,7 @@ VIEWS.home = async (el) => {
       <div class="holidays" id="homeHol"></div></div>
     <div class="section two">
       <div><div class="section-head"><h2>📉 Cambios de precio</h2></div><div class="list" id="homeChanges"></div></div>
-      <div><div class="section-head"><h2>🔔 Últimas alertas</h2><a href="#alerts" class="small">Ver todas</a></div><div class="list" id="homeAlerts"></div></div>
+      <div><div class="section-head"><h2>🔔 ${S.static ? "Últimos chollos" : "Últimas alertas"}</h2><a href="#alerts" class="small">Ver todas</a></div><div class="list" id="homeAlerts"></div></div>
     </div>`;
   paintIcons(el);
   const f = searchForm($('#homeSearch'), { compact: true });
@@ -248,7 +256,7 @@ VIEWS.home = async (el) => {
     $('#homeDeals').innerHTML = deals.slice(1).map((d) => dealCard(d)).join('');
   } else {
     $('#homeDeals').innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">✈️</div><h3>${s.destinations ? 'Aún no hay precios' : 'Añade tus destinos favoritos'}</h3>
-      ${s.destinations ? '<button class="btn primary" onclick="startScan()">Escanear ahora</button>' : '<a class="btn primary" href="#destinations">Añadir destinos</a>'}</div>`;
+      ${S.static ? '' : s.destinations ? '<button class="btn primary" onclick="startScan()">Escanear ahora</button>' : '<a class="btn primary" href="#destinations">Añadir destinos</a>'}</div>`;
   }
   $('#homeHol').innerHTML = hol.items.slice(0, 3).map(holCard).join('') || '<p class="muted small">No hay festivos próximos.</p>';
   paintIcons($('#homeHol'));
@@ -406,7 +414,7 @@ async function searchHoliday(btn) {
   const h = JSON.parse(btn.dataset.hol), card = btn.closest('.hol'), res = $('.res', card);
   const target = $('#holTarget')?.value || 'fav';
   const params = { mode: 'explore', trip: 'rt', origins: $('#holOrigin')?.value || 'mine', date_from: addDays(h.start, -1), date_to: h.start, return_from: h.end, return_to: addDays(h.end, 1), min_nights: Math.max(1, h.days - 2), max_nights: h.days + 1, pax: pax(), baggage: S.settings.baggage };
-  if (target === 'fav') params.favorites = true; else params.theme = target === 'all' ? '' : target;
+  if (target === 'fav' || S.static) params.favorites = true; else params.theme = target === 'all' ? '' : target;
   btn.disabled = true; res.innerHTML = '<div class="progress"><div style="width:40%"></div></div>';
   try {
     const r = await runSearch(params, res);
@@ -423,7 +431,7 @@ VIEWS.holidays = async (el) => {
     <div class="card pad grid-form">
       <label class="f">Comunidad<select id="holRegion">${Object.entries(regions).map(([k, v]) => `<option value="${k}" ${S.settings.holiday_region === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
       <label class="f">Salgo desde<select id="holOrigin">${originOptions('mine')}</select></label>
-      <label class="f">Buscar en<select id="holTarget"><option value="fav">Mis destinos favoritos</option><option value="barato">Low cost cerca</option><option value="playa">Playa</option><option value="ciudad">Escapadas urbanas</option><option value="naturaleza">Naturaleza</option><option value="all">Todo el catálogo</option></select></label>
+      <label class="f ${S.static ? 'hidden' : ''}">Buscar en<select id="holTarget"><option value="fav">Mis destinos favoritos</option><option value="barato">Low cost cerca</option><option value="playa">Playa</option><option value="ciudad">Escapadas urbanas</option><option value="naturaleza">Naturaleza</option><option value="all">Todo el catálogo</option></select></label>
     </div>
     <p class="tiny muted">Festivos nacionales y autonómicos habituales. Los locales y algunos autonómicos cambian cada año: revisa el calendario oficial.</p>
     <div class="holidays section" id="holList"></div>`;
@@ -448,7 +456,7 @@ VIEWS.calendar = async (el) => {
       <label class="f" style="min-width:200px">Destino<select id="cD">${dests.map((d) => `<option value="${d.code}" ${d.code === c.d ? 'selected' : ''}>${esc(d.name)} (${d.code})</option>`).join('')}</select></label>
       <div class="seg" id="cT">${['rt', 'ow'].map((t) => `<button data-t="${t}" class="${t === c.t ? 'on' : ''}">${tripLabel(t)}</button>`).join('')}</div>
       <span class="spacer"></span><div class="legend"><span>barato</span><span class="scale"></span><span>caro</span></div>
-      <a class="btn sm" id="cCsv">${ic('download')} CSV</a>
+      <a class="btn sm ${S.static ? 'hidden' : ''}" id="cCsv">${ic('download')} CSV</a>
     </div>
     <div id="cSum" class="section"></div><div class="months section" id="cGrid"></div>
     <div class="section card pad"><div class="section-head"><h2>Evolución del precio de la ruta</h2><div class="chart-legend"><span><i style="background:var(--series-1)"></i>Mínimo del año</span><span><i style="background:var(--series-muted)"></i>Precio mediano</span></div></div><div id="cHist"></div></div>`;
@@ -570,8 +578,8 @@ function alertItem(a) {
 VIEWS.alerts = async (el) => {
   const alerts = await api('/api/alerts?limit=300');
   const kinds = [...new Set(alerts.map((a) => a.kind))];
-  el.innerHTML = `<div class="page-head"><div><h1>Alertas</h1><p>Chollos y bajadas detectados para ti.</p></div>
-    <div class="row"><button class="btn sm" id="aRead">${ic('check')} Marcar leídas</button><button class="btn sm" id="aCsv">${ic('download')} CSV</button><button class="btn sm danger" id="aClear">${ic('trash')} Borrar</button></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>${S.static ? 'Últimos chollos' : 'Alertas'}</h1><p>${S.static ? 'Ofertas detectadas en los últimos escaneos.' : 'Chollos y bajadas detectados para ti.'}</p></div>
+    <div class="row ${S.static ? 'hidden' : ''}"><button class="btn sm" id="aRead">${ic('check')} Marcar leídas</button><button class="btn sm" id="aCsv">${ic('download')} CSV</button><button class="btn sm danger" id="aClear">${ic('trash')} Borrar</button></div></div>
     <div class="chips" id="aF"><button class="chip on" data-k="">Todas (${alerts.length})</button>${kinds.map((k) => `<button class="chip" data-k="${k}">${esc((KIND[k] || [k])[0])} (${alerts.filter((a) => a.kind === k).length})</button>`).join('')}</div>
     <div class="list section" id="aList"></div>`;
   const draw = (k) => { const l = alerts.filter((a) => !k || a.kind === k); $('#aList').innerHTML = l.length ? l.map(alertItem).join('') : '<div class="card empty"><div class="big">🔔</div><h3>Sin alertas</h3><p>Cuando detectemos chollos o bajadas aparecerán aquí.</p></div>'; };
@@ -583,11 +591,27 @@ VIEWS.alerts = async (el) => {
 };
 
 /* =================== AJUSTES =================== */
+async function renderPrefs(el) {
+  const s = await api('/api/settings');
+  el.innerHTML = `<div class="page-head"><div><h1>Preferencias</h1><p>Se guardan solo en este navegador.</p></div></div>
+  <div class="card pad grid-form">
+    <label class="f">Viajeros<input id="pPax" type="number" min="1" max="9" value="${s.passengers || 1}"></label>
+    <label class="f">Equipaje<select id="pBag">${Object.entries(S.meta.baggage_options).map(([k, v]) => `<option value="${k}" ${s.baggage === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
+    <label class="f">Descuento de residente<select id="pRes"><option value="">No soy residente</option><option value="canarias" ${s.resident_discount === 'canarias' ? 'selected' : ''}>Residente en Canarias (75 %)</option><option value="baleares" ${s.resident_discount === 'baleares' ? 'selected' : ''}>Residente en Baleares (75 %)</option></select></label>
+    <button class="btn primary" id="pSave">${ic('check')} Guardar</button>
+  </div>
+  <div class="card pad section"><h2>📱 Instálala en tu móvil</h2><p class="small muted" style="margin:6px 0 0">En el navegador del móvil pulsa «Compartir → Añadir a pantalla de inicio» (iPhone) o «⋮ → Instalar app» (Android).</p></div>
+  <div class="card pad section"><h2>ℹ️ Sobre los precios</h2><p class="small muted" style="margin:6px 0 0">Precios de búsquedas recientes en Aviasales, actualizados cada 6 horas. Pueden cambiar: confírmalos siempre al reservar. El equipaje y el descuento de residente son estimaciones.</p></div>`;
+  paintIcons(el);
+  $('#pSave').onclick = async () => { S.settings = await api('/api/settings', { method: 'PUT', body: { passengers: +$('#pPax').value, baggage: $('#pBag').value, resident_discount: $('#pRes').value } }); SD.cache = {}; toast('✅ Guardado'); };
+}
 VIEWS.settings = async (el) => {
+  if (S.static) return renderPrefs(el);
   const s = await api('/api/settings'); S.settings = s; let origins = [...s.origins];
   const sel = (name, opts) => `<select name="${name}">${opts.map(([k, v]) => `<option value="${k}" ${String(s[name]) === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
   const inp = (name, type = 'text', extra = '') => `<input name="${name}" type="${type}" value="${esc(s[name] ?? '')}" ${extra}>`;
   el.innerHTML = `<div class="page-head"><div><h1>Ajustes</h1><p>Todo se guarda en tu servidor. Los secretos se muestran enmascarados.</p></div></div>
+  <div id="cloudBox" class="card pad" style="margin-bottom:16px"><div class="skel" style="height:120px"></div></div>
   <form id="sf" autocomplete="off">
     <div class="card pad"><h2>✈️ Desde dónde sales</h2><p class="muted small">Aeropuertos de salida para los escaneos y búsquedas. Códigos IATA de ciudad (TCI = Tenerife, LON = todos los de Londres…).</p>
       <div class="chips" id="oChips"></div>
@@ -659,13 +683,75 @@ VIEWS.settings = async (el) => {
   $('#sf').onsubmit = async (e) => {
     e.preventDefault(); const body = { origins };
     for (const x of e.target.elements) if (x.name) body[x.name] = x.value;
-    try { S.settings = await api('/api/settings', { method: 'PUT', body }); $('#sMsg').textContent = '✅ Guardado'; setTimeout(() => ($('#sMsg').textContent = ''), 2500); refreshStatus(); } catch (err) { toast(err.message); }
+    try {
+      S.settings = await api('/api/settings', { method: 'PUT', body }); $('#sMsg').textContent = '✅ Guardado'; setTimeout(() => ($('#sMsg').textContent = ''), 2500); refreshStatus();
+      if (S.cloud?.configured && S.cloud?.workflow) { toast('☁️ Sincronizando con GitHub…'); api('/api/cloud/sync', { method: 'POST', body: { schedule: S.cloud.schedule_enabled !== false } }).then(() => { toast('☁️ GitHub actualizado'); renderCloud(); }).catch((e) => toast(e.message)); }
+    } catch (err) { toast(err.message); }
   };
   $('#tNotif').onclick = async () => { $('#tRes').textContent = 'Enviando…'; const r = await api('/api/settings/test-notification', { method: 'POST' }); $('#tRes').textContent = r.error || Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(' · '); };
   $('#reOnb').onclick = onboarding;
+  renderCloud();
   if (S.installPrompt) { $('#installBtn').hidden = false; $('#installBtn').onclick = () => S.installPrompt.prompt(); }
 };
 VIEWS.more = () => {};
+
+/* =================== NUBE: avisos 24/7 + web pública (GitHub) =================== */
+async function renderCloud() {
+  const box = $('#cloudBox'); if (!box) return;
+  let c;
+  try { c = await api('/api/cloud/status'); } catch (e) { c = { error: e.message }; }
+  S.cloud = c;
+  const s = S.settings;
+  const step = (ok, title, body = '', warn = false) => `<div class="cstep ${ok ? 'ok' : warn ? 'warn' : ''}"><i>${ok ? '✓' : warn ? '!' : '·'}</i><div><b>${title}</b>${body ? `<div class="small muted">${body}</div>` : ''}</div></div>`;
+  const ready = c.configured && !c.error;
+  box.innerHTML = `<div class="row"><h2 style="flex:1">☁️ Avisos 24/7 y web pública <span class="pill good">gratis</span></h2>
+      ${ready && c.pages_url ? `<a class="btn sm primary" href="${esc(c.pages_url)}" target="_blank" rel="noopener">${ic('ext')} Abrir web pública</a>` : ''}</div>
+    <p class="small muted" style="margin:6px 0 14px">GitHub revisa los precios cada 6 h aunque apagues el PC, te avisa al móvil y publica una web de solo lectura que cualquiera puede abrir. Tus claves nunca se publican.</p>
+    <div class="csteps">
+      ${step(c.has_token && !c.error, '1. Conecta tu cuenta de GitHub', c.error ? `<span style="color:var(--bad)">${esc(c.error)}</span>` : c.has_token ? `Repositorio: <b>${esc(c.repo || '—')}</b>` :
+        `<details><summary>Cómo crear el token (2 min)</summary><ol class="small" style="margin:6px 0;padding-left:18px">
+          <li>Abre <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com → Fine-grained token</a>.</li>
+          <li>Nombre: «Flight Tracker». Caducidad: 1 año.</li>
+          <li><b>Repository access</b> → Only select repositories → tu repositorio.</li>
+          <li><b>Permissions → Repository</b>: Actions, Administration, Pages, Secrets y Variables en «Read and write».</li>
+          <li>Pulsa <b>Generate token</b>, cópialo y pégalo aquí.</li></ol></details>`)}
+      <div class="row" style="margin:-4px 0 10px 34px"><input id="ghTok" type="password" placeholder="${c.has_token ? 'Token guardado ••••' : 'Pega tu token de GitHub'}" style="flex:1;min-width:200px">
+        <input id="ghRepo" placeholder="usuario/repositorio" value="${esc(s.github_repo || c.detected_repo || '')}" style="width:220px">
+        <button class="btn sm" id="ghSave">Guardar y comprobar</button></div>
+      ${ready ? step(c.workflow, '2. Código subido a GitHub', c.workflow ? 'Workflow «Escaneo programado» encontrado.' : 'Sube el código una vez: <code>git add -A; git commit -m "v3"; git push</code>') : ''}
+      ${ready ? step(!c.private, '3. Repositorio público', c.private ? 'GitHub Pages gratis y los minutos ilimitados de Actions requieren un repositorio público. Tus secrets siguen ocultos. <button class="btn sm" id="ghPublic">Hacer público</button>' : 'Público: minutos de Actions ilimitados y web gratis.', c.private) : ''}
+      ${ready ? step(c.has_price_token, '4. Token de precios (Travelpayouts)', c.has_price_token ? 'Guardado en GitHub como secret.' : s.travelpayouts_token ? 'Pulsa «Sincronizar» para subirlo.' : 'Ponlo abajo en «Fuente de precios» y sincroniza.') : ''}
+      ${ready ? step(c.has_notifications, '5. Avisos al móvil', c.has_notifications ? 'Canal configurado.' : 'Pon un tema de ntfy o Telegram abajo en «Notificaciones» y sincroniza.', !c.has_notifications) : ''}
+      ${ready ? step(c.in_sync, '6. Ajustes y destinos sincronizados', c.in_sync ? 'GitHub usa tus orígenes, destinos y preferencias actuales.' : 'Hay cambios sin subir.') : ''}
+      ${ready ? step(c.schedule_enabled, '7. Escaneo automático cada 6 h', `<label class="check"><input type="checkbox" id="ghSched" ${c.schedule_enabled ? 'checked' : ''}> Activado</label>`) : ''}
+      ${ready ? step(c.pages_enabled && c.pages_is_actions, '8. Web pública', c.pages_url ? `<a href="${esc(c.pages_url)}" target="_blank" rel="noopener"><b>${esc(c.pages_url)}</b></a> <button class="btn sm ghost" id="ghShare">${ic('share')} Compartir</button><div class="tiny">Se actualiza tras cada escaneo real (el primero tarda ~5 min).</div>` : 'Se activa al sincronizar (repositorio público).') : ''}
+    </div>
+    ${ready ? `<div class="row" style="margin-top:14px">
+      <button class="btn primary" id="ghSync">${ic('refresh')} Sincronizar con GitHub</button>
+      <button class="btn" id="ghDemo">🔔 Probar aviso (demo)</button>
+      <button class="btn" id="ghRun">${ic('zap')} Escanear ahora en la nube</button>
+      <label class="check"><input type="checkbox" id="ghPublish" ${s.publish_site ? 'checked' : ''}> Publicar web pública</label>
+      <input id="ghTitle" value="${esc(s.site_title || '')}" placeholder="Título de la web" style="width:200px"></div>
+    ${c.runs && c.runs.length ? `<h3 style="margin-top:16px">Últimas ejecuciones</h3><div class="list" style="margin-top:8px">${c.runs.map((r) => {
+      const st = r.status !== 'completed' ? ['⏳ En curso', 'warn'] : r.conclusion === 'success' ? ['✓ Correcto', 'good'] : r.conclusion === 'skipped' ? ['Omitido', 'neutral'] : ['✗ Error', 'bad'];
+      return `<a class="card item" href="${esc(r.url)}" target="_blank" rel="noopener" style="padding:8px 12px"><span class="pill ${st[1]}">${st[0]}</span><span class="grow small">${r.event === 'schedule' ? 'Automático' : 'Manual'} · ${ago(r.created_at)}</span>${ic('ext')}</a>`;
+    }).join('')}</div>` : ''}` : ''}`;
+  paintIcons(box);
+  const act = async (btn, fn, ok) => { btn.disabled = true; try { const r = await fn(); toast(ok(r)); } catch (e) { toast(e.message, 6000); } btn.disabled = false; renderCloud(); };
+  $('#ghSave').onclick = (e) => act(e.currentTarget, async () => {
+    const body = { github_repo: $('#ghRepo').value.trim() }; if ($('#ghTok').value.trim()) body.github_token = $('#ghTok').value.trim();
+    S.settings = await api('/api/settings', { method: 'PUT', body }); return true;
+  }, () => 'Guardado. Comprobando GitHub…');
+  $('#ghPublic')?.addEventListener('click', (e) => { if (confirm('¿Hacer público el repositorio? El código será visible; tus tokens (secrets) seguirán ocultos.')) act(e.currentTarget, () => api('/api/cloud/make-public', { method: 'POST' }), () => '✅ Repositorio público'); });
+  $('#ghSync')?.addEventListener('click', (e) => act(e.currentTarget, async () => {
+    S.settings = await api('/api/settings', { method: 'PUT', body: { publish_site: $('#ghPublish').checked, site_title: $('#ghTitle').value } });
+    return api('/api/cloud/sync', { method: 'POST', body: { schedule: $('#ghSched')?.checked !== false } });
+  }, (r) => r.pages_warning ? `⚠️ ${r.pages_warning}` : `✅ Subidos ${r.variables.length} ajustes y ${r.secrets.length} claves`));
+  $('#ghSched')?.addEventListener('change', (e) => act(e.target, () => api('/api/cloud/schedule', { method: 'POST', body: { enabled: e.target.checked } }), (r) => r.schedule ? '✅ Escaneo automático activado' : 'Escaneo automático pausado'));
+  $('#ghDemo')?.addEventListener('click', (e) => act(e.currentTarget, () => api('/api/cloud/run', { method: 'POST', body: { demo: true } }), () => '🔔 Prueba lanzada: el aviso llegará en 1–2 minutos'));
+  $('#ghRun')?.addEventListener('click', (e) => act(e.currentTarget, () => api('/api/cloud/run', { method: 'POST', body: { demo: false } }), () => '✈️ Escaneo lanzado en GitHub (unos minutos)'));
+  $('#ghShare')?.addEventListener('click', () => shareText('Chollos de vuelos', '✈️ Mira estos chollos de vuelos', c.pages_url));
+}
 
 /* =================== ASISTENTE INICIAL =================== */
 function onboarding() {
@@ -713,14 +799,24 @@ function onboarding() {
   draw();
 }
 
+/* =================== web pública (modo estático) =================== */
+function setupStaticUI() {
+  document.body.classList.add('is-static');
+  $$('[data-view="watches"], [data-view="destinations"]').forEach((a) => a.remove());
+  $$('[data-view="settings"]').forEach((a) => { a.lastChild.textContent = 'Preferencias'; });
+  ['#scanBtn', '#scanBtnM', '#logoutBtn'].forEach((id) => $(id)?.classList.add('hidden'));
+}
+VIEWS.prefs = null;
+
 /* =================== arranque =================== */
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installPrompt = e; });
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
+if (!window.STATIC && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 (async function init() {
   paintIcons();
   try {
     const [cat, countries, settings, meta] = await Promise.all([api('/api/catalog?limit=500'), api('/api/catalog/countries'), api('/api/settings'), api('/api/meta')]);
     Object.assign(S, { catalog: cat, countries, settings, meta });
+    if (S.static) setupStaticUI();
     await refreshStatus();
     route(true);
   } catch (e) { $('.content').innerHTML = `<div class="card empty"><h3>No se pudo conectar con el servidor</h3><p>${esc(e.message)}</p></div>`; }

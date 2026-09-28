@@ -60,11 +60,11 @@ function renderDetail() {
       <div id="bagBox"><div class="skel" style="height:80px"></div></div>
     </div>
 
-    ${o.trip === 'rt' ? `<div><div class="row"><h3>📆 Prueba otras fechas</h3><span class="muted small">filas: ida · columnas: vuelta</span></div><div id="dGrid" style="margin-top:8px"><div class="skel" style="height:120px"></div></div></div>` : ''}
+    ${o.trip === 'rt' && !S.static ? `<div><div class="row"><h3>📆 Prueba otras fechas</h3><span class="muted small">filas: ida · columnas: vuelta</span></div><div id="dGrid" style="margin-top:8px"><div class="skel" style="height:120px"></div></div></div>` : ''}
 
-    <div><h3>📈 Cómo ha cambiado este precio</h3><div id="dHist" style="margin-top:8px"></div></div>
+    ${S.static ? '' : '<div><h3>📈 Cómo ha cambiado este precio</h3><div id="dHist" style="margin-top:8px"></div></div>'}
 
-    <details class="card pad" style="box-shadow:none" ${S.status?.live_check ? '' : ''}>
+    <details class="card pad ${S.static ? 'hidden' : ''}" style="box-shadow:none">
       <summary style="cursor:pointer;font-weight:800">⚡ Precio real ahora en Google Flights</summary>
       <div style="margin-top:12px">${S.status?.live_check ? `<div class="row"><select id="lcClass" style="width:auto"><option value="1">Turista</option><option value="2">Turista superior</option><option value="3">Business</option><option value="4">Primera</option></select>
         <label class="check"><input type="checkbox" id="lcDirect"> Solo directos</label><button class="btn primary sm" id="liveBtn">Consultar</button></div>` : '<p class="small muted" style="margin:0">Añade una clave gratuita de SerpApi en Ajustes para activarlo.</p>'}
@@ -74,8 +74,8 @@ function renderDetail() {
   </div>
   <div class="sh-foot">
     <button class="btn primary" id="bookBtn">${ic('ext')} Reservar</button>
-    <button class="btn" id="watchBtn">${ic('eye')} Vigilar</button>
-    <input id="wTarget" type="number" min="0" placeholder="Avísame a… ${sym()}" style="width:150px">
+    <button class="btn ${S.static ? 'hidden' : ''}" id="watchBtn">${ic('eye')} Vigilar</button>
+    <input id="wTarget" class="${S.static ? 'hidden' : ''}" type="number" min="0" placeholder="Avísame a… ${sym()}" style="width:150px">
     <span class="spacer"></span>
     <button class="btn icon ghost" id="shareBtn" title="Compartir">${ic('share')}</button>
     <button class="btn icon ghost" id="icsBtn" title="Añadir al calendario">${ic('calendar')}</button>
@@ -101,7 +101,7 @@ function renderDetail() {
   updBag();
 
   // cuadrícula ida x vuelta
-  if (o.trip === 'rt') {
+  if (o.trip === 'rt' && !S.static) {
     api(`/api/grid?origin=${o.origin}&destination=${o.destination}&depart=${o.depart_date}&return=${o.return_date}`).then((g) => {
       const cells = new Map(g.cells.map((c) => [`${c.depart}|${c.return}`, c]));
       const prices = g.cells.map((c) => c.price);
@@ -128,7 +128,7 @@ function renderDetail() {
   }
 
   // histórico del día
-  api(`/api/quote-history?origin=${o.origin}&destination=${o.destination}&trip=${o.trip}&date=${o.depart_date}`).then((h) => {
+  if (!S.static) api(`/api/quote-history?origin=${o.origin}&destination=${o.destination}&trip=${o.trip}&date=${o.depart_date}`).then((h) => {
     chart($('#dHist'), [{ name: 'Precio', color: 'var(--series-1)', data: h.map((x) => ({ x: x.seen_at.slice(0, 16), y: x.price })) }],
       { height: 170, xFmt: (x) => new Date(x).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) });
     if (!h.length) $('#dHist').innerHTML = '<p class="muted small">Aún no hay histórico para esta fecha: se irá llenando con cada escaneo.</p>';

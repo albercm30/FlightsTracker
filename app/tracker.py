@@ -25,7 +25,7 @@ KIND_LABELS = {
     "drop": "Bajada de precio",
 }
 KIND_PRIORITY = {"record": 4, "deal": 3, "target": 2, "drop": 1}
-TRIP_LABELS = {"ow": "solo ida", "rt": "ida y vuelta"}
+TRIP_LABELS = {"ow": "solo ida", "rt": "ida y vuelta", "we": "fin de semana"}
 
 _DAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
 _MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
@@ -458,14 +458,66 @@ def cleanup(today: date):
         c.execute("DELETE FROM quote_history WHERE depart_date < ?", ((today - timedelta(days=30)).isoformat(),))
 
 
-def _fetch_route(provider, origin, dest, months, settings, errors, delay=0.0, trip="ow"):
-    quotes = []
-    keep = scan_filter(settings)
-    kw = _fetch_kwargs(settings, trip)
+def trip_length(dest: str, settings: dict):
+    """Duración elegida para ese destino (o su país): "weekend", un nº de días, o None (la general)."""
+    tl = settings.get("trip_lengths") or {}
+    if not isinstance(tl, dict):
+        return None
+    v = tl.get(dest.upper())
+    if v in (None, "", 0):
+        v = tl.get(catalog.info(dest).get("country_code", ""))
+    if v == "weekend":
+        return "weekend"
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if 2 <= v <= 60 else None
+
+
+def length_label(spec) -> str:
+    if spec == "weekend":
+        return "fin de semana (vie–dom)"
+    return f"{spec} días" if spec else ""
+
+
+def length_nights(spec):
+    """(noches mín., noches máx., filtro extra) para esa duración. N días = N-1 noches."""
+    if spec == "weekend":
+        return 2, 2, lambda q: _is_weekend(q)
+    if spec:
+        return spec - 1, spec - 1, None
+    return None, None, None
+
+
+def _is_weekend(q) -> bool:
+    return (bool(q.return_date) and q.nights == 2 and date.fromisoformat(q.depart_date).weekday() == 4)
+
+
+def _fetch_route(provider, origin, dest, months, settings, errors, delay=0.0, trip="ow", weekends=None):
+    """Lo más barato por día de salida. En ida y vuelta, si se pasa `weekends` (dict), guarda ahí
+    además lo más barato de cada fin de semana viernes→domingo, sacado de la misma respuesta."""
+    quotes, wk = [], []
+    base_keep = scan_filter(settings)
+    spec = trip_length(dest, settings) if trip == "rt" else None
+    lo, hi, extra = length_nights(spec)
+    keep = (lambda q: base_keep(q) and extra(q)) if extra else base_keep
+    kw = _fetch_kwargs(settings, trip, lo, hi)
+    want_lo, want_hi = kw["min_nights"], kw["max_nights"]
+    if trip == "rt" and weekends is not None:
+        kw["min_nights"] = min(2, want_lo)
+        kw["max_nights"] = max(2, want_hi)
     for month in months:
         try:
             data, hit = provider.fetch_month(origin, dest, month, **kw), False
-            quotes += [q for q in data if keep(q)]
+            for q in data:
+                if not base_keep(q):
+                    continue
+                if trip == "rt" and weekends is not None and _is_weekend(q):
+                    wk.append(q)
+                if trip != "rt" or want_lo <= (q.nights or 0) <= want_hi:
+                    if keep(q):
+                        quotes.append(q)
         except Exception as e:  # noqa: BLE001 - seguimos con el resto
             hit = True
             log.warning("Error %s→%s %s %s: %s", origin, dest, trip, month, e)
@@ -474,6 +526,8 @@ def _fetch_route(provider, origin, dest, months, settings, errors, delay=0.0, tr
                 raise
         if delay and not hit:
             time.sleep(delay)
+    if weekends is not None:
+        weekends.update(cheapest_per_day(wk))
     return cheapest_per_day(quotes)
 
 
@@ -520,10 +574,13 @@ def run_scan(provider=None, today: date = None, notify: bool = True) -> dict:
             progress["current"] = f"{origin} → {dest} ({TRIP_LABELS[trip]})"
             if provider.name == "demo":
                 backfill_demo(origin, dest, settings, trip)
-            best = _fetch_route(provider, origin, dest, months, settings, errors, delay, trip)
+            wk = {} if trip == "rt" else None
+            best = _fetch_route(provider, origin, dest, months, settings, errors, delay, trip, weekends=wk)
             n_quotes += len(best)
             if best:
                 cands += _save_route(origin, dest, trip, best, today, settings, max_price)
+            if wk:  # fines de semana vie→dom (para buscar «Fin de semana» en la web)
+                _save_route(origin, dest, "we", wk, today, settings, None, alerts=False)
             progress["done"] += 1
         all_alerts = record_alerts(select_alerts(cands, settings, today), settings)
         cleanup(today)
@@ -596,6 +653,7 @@ def current_deals(limit: int = 30, today: date = None, trip: str = None):
                 m = q["depart_date"][:7]
                 spark[m] = min(spark.get(m, q["price"]), q["price"])
         out.append({**best, "name": dest["name"], "country": dest["country"], "max_price": dest["max_price"],
+                    "length": length_label(trip_length(dest["code"], settings)) if trip == "rt" else "",
                     "median": median, "savings": (1 - best["price"] / median) if median else 0,
                     "range": [min(route_prices), median, max(route_prices)] if route_prices else None,
                     "spark": [spark[k] for k in sorted(spark)]})
@@ -606,7 +664,7 @@ def current_deals(limit: int = 30, today: date = None, trip: str = None):
 def recent_changes(limit: int = 50, min_pct: float = 5.0, favorites_only: bool = True):
     sql = ("SELECT h.* FROM quote_history h "
            + ("JOIN destinations d ON d.code = h.destination " if favorites_only else "")
-           + "WHERE h.prev_price IS NOT NULL AND h.depart_date >= ? "
+           + "WHERE h.prev_price IS NOT NULL AND h.depart_date >= ? AND h.trip != 'we' "
            "AND ABS(h.price - h.prev_price) * 100.0 / h.prev_price >= ? ORDER BY h.seen_at DESC, "
            "ABS(h.price - h.prev_price) * 1.0 / h.prev_price DESC LIMIT ?")
     rows = db.rows(sql, (date.today().isoformat(), min_pct, limit))

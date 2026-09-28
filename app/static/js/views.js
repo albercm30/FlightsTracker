@@ -34,16 +34,16 @@ function openMore() {
 async function refreshStatus() {
   const s = await api('/api/status'); S.status = s;
   const last = s.last_scan;
-  $('#sideStatus').innerHTML = `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza sola cada 6 horas</div>`;
+  $('#sideStatus').innerHTML = `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza cada mañana</div>`;
   const ban = [];
   if (isIOS() && !isStandalone() && !S.iosHintClosed) ban.push(`<div class="banner info" id="iosHint">📲 <div><b>Úsala como app en tu iPhone:</b> pulsa <b>Compartir</b> → <b>Añadir a pantalla de inicio</b>.</div><button class="btn icon ghost" onclick="S.iosHintClosed=1;this.parentElement.remove()">✕</button></div>`);
-  if (!isAdmin()) ban.push(`<div class="banner info">🔑 <div><b>Conecta tu GitHub una vez</b> para elegir destinos, filtros y avisos desde aquí. <a href="#settings">Ir a Ajustes</a></div></div>`);
   $('#banners').innerHTML = ban.join('');
   return s;
 }
 async function startScan() {
-  if (!isAdmin()) { toast('Conecta tu GitHub en Ajustes para lanzar escaneos'); go('settings'); return; }
-  try { await ghRunScan(); toast('✈️ Escaneo lanzado en GitHub: la web se actualizará en unos minutos', 6000); } catch (e) { toast(e.message, 6000); }
+  // se relanza a través de «Guardar» (GitHub): mismos ajustes, precios nuevos
+  const w = await workingConfig(); sendConfig(w.cfg);
+  toast('Pulsa «Create» en GitHub para buscar precios ahora.', 6000);
 }
 $('#scanBtn').onclick = startScan; $('#scanBtnM').onclick = startScan;
 $('#themeBtn').onclick = cycleTheme; $('#themeBtnM').onclick = cycleTheme;
@@ -102,10 +102,10 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
     : `<label class="f">Zona<select name="region"><option value="">Todo el mundo</option>${regions.map(([k, l]) => `<option value="${k}" ${v.region === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></label>`}
       <label class="f">Cuándo<select name="when">
         <option value="any">Cualquier fecha (12 meses)</option>
-        <option value="weekend" ${v.when === 'weekend' ? 'selected' : ''}>Fines de semana</option>
+        <option value="weekend" ${v.when === 'weekend' ? 'selected' : ''}>Fin de semana (vie → dom)</option>
         ${monthOptions().map(([k, l]) => `<option value="m:${k}" ${v.when === 'm:' + k ? 'selected' : ''}>${l}</option>`).join('')}
         <option value="range" ${v.when === 'range' ? 'selected' : ''}>Fechas concretas…</option></select></label>
-      <label class="f" data-nights>Noches<div class="row" style="flex-wrap:nowrap"><input name="min_nights" type="number" min="1" max="60" value="${v.min_nights}" style="width:70px"><span class="muted">–</span><input name="max_nights" type="number" min="1" max="60" value="${v.max_nights}" style="width:70px"></div></label>
+      <label class="f" data-nights>Noches <span class="tiny muted" data-lenhint style="text-transform:none;font-weight:600"></span><div class="row" style="flex-wrap:nowrap"><input name="min_nights" type="number" min="1" max="60" value="${v.min_nights}" style="width:70px"><span class="muted">–</span><input name="max_nights" type="number" min="1" max="60" value="${v.max_nights}" style="width:70px"></div></label>
       <button class="btn primary go" type="submit">${ic('search')} ${mode === 'days' ? 'Buscar' : 'Explorar'}</button>
     </div>
     <div class="grid-form" data-range style="margin-top:12px" hidden>
@@ -131,6 +131,15 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
   };
   $('[data-trip]', form).onclick = (e) => { const b = e.target.closest('[data-t]'); if (!b) return; $$('[data-t]', form).forEach((x) => x.classList.toggle('on', x === b)); sync(); };
   form.when.onchange = sync;
+  form._nightsDirty = !!values.custom_nights;
+  ['min_nights', 'max_nights'].forEach((n) => form[n]?.addEventListener('input', () => { form._nightsDirty = true; lenHint(); }));
+  const lenHint = () => {
+    const h = $('[data-lenhint]', form); if (!h || !dest) return;
+    const r = resolvePlace(dest.value), code = r.destinations ? r.destinations[0] : null;
+    const spec = code ? destLength(code) : r.country ? (S.settings.trip_lengths || {})[r.country] : null;
+    h.textContent = spec && !form._nightsDirty ? `Usando ${spec === 'weekend' ? 'fin de semana (vie–dom)' : `${spec} días`} (Mis destinos)` : '';
+  };
+  dest?.addEventListener('change', lenHint);
   $('[data-wd]', form)?.addEventListener('click', (e) => { const b = e.target.closest('[data-d]'); if (b) b.classList.toggle('on'); });
   $('[data-themes]', form)?.addEventListener('click', (e) => { const b = e.target.closest('[data-theme]'); if (!b) return; $$('[data-theme]', form).forEach((x) => x.classList.toggle('on', x === b)); });
   form._airlines = new Set(v.airlines || []); form._exclude = new Set(v.exclude_airlines || []); form._sort = v.sort || 'price';
@@ -171,15 +180,18 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
     const pb = readPaxBag($('#pb', form));
     const p = { trip, origins: form.origins.value, pax: pb.pax, baggage: pb.baggage, mode };
     if (trip === 'rt') { p.min_nights = +form.min_nights.value || 1; p.max_nights = Math.max(p.min_nights, +form.max_nights.value || p.min_nights); }
+    // la duración elegida para cada país en «Mis destinos» manda, salvo que cambies las noches a mano
+    p.use_lengths = trip === 'rt' && when !== 'weekend' && !form._nightsDirty;
     if (when.startsWith('m:')) {
       const [y, m] = when.slice(2).split('-').map(Number);
       p.date_from = `${when.slice(2)}-01`;
       p.date_to = `${when.slice(2)}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`;
     } else if (when === 'weekend') {
-      p.trip = 'rt'; p.weekdays = [3, 4]; p.return_weekdays = [6, 0]; p.min_nights = 2; p.max_nights = 4;
+      p.trip = 'rt'; p.weekdays = [4]; p.return_weekdays = [6]; p.min_nights = 2; p.max_nights = 2;
     } else if (when === 'range') {
       ['date_from', 'date_to', 'return_from', 'return_to'].forEach((k) => { if (form[k].value) p[k] = form[k].value; });
     }
+    if (form._nightsDirty) p.custom_nights = true;
     if (!compact) {
       const wd = $$('[data-wd] .on', form).map((b) => +b.dataset.d);
       if (wd.length && when !== 'weekend') p.weekdays = wd;
@@ -448,14 +460,8 @@ function renderExplore(box, r, form) {
   paintIcons(box);
   rb.bind(box);
   loadMap(list);
-  if (S.static && !isAdmin()) $('#exFav').remove();
-  else $('#exFav').onclick = async () => {
-    const codes = list.slice(0, 5).map((d) => d.destination);
-    try {
-      if (S.static) { const cur = ((await ghGetVar('DESTINATIONS')) || '').split(',').filter(Boolean); await ghSetVar('DESTINATIONS', [...new Set([...cur, ...codes])].join(',')); toast('⭐ Añadidos. Aparecerán tras el próximo escaneo (o pulsa «Guardar» en Destinos).', 6000); }
-      else { await api('/api/destinations', { method: 'POST', body: { codes } }); toast('⭐ Añadidos a tus destinos'); }
-    } catch (e) { toast(e.message, 6000); }
-  };
+  $('#exFav').onclick = () => addFavorites(list.slice(0, 5).map((d) => d.destination));
+
   $('#exCsv').onclick = () => download('explorar.csv', toCSV(list, [['destino', (o) => o.dest_name], ['pais', (o) => o.dest_country], ['origen', (o) => o.origin], ['salida', (o) => o.depart_date], ['vuelta', (o) => o.return_date || ''], ['precio_persona', (o) => o.price], ['total_estimado', (o) => o.price_total], ['aerolinea', (o) => o.airline_name]]), 'text/csv');
 }
 function loadLeaflet() {

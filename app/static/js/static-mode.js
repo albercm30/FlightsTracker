@@ -128,6 +128,18 @@ function staticBestScore(r) {
   return r.price_total / Math.max(1, r.pax || 1) + 12 * h + 20 * st;
 }
 
+/* Duración elegida para un destino (o su país) en «Mis destinos»: 'weekend' | nº de días | null */
+function destLength(code) {
+  const tl = (S.settings && S.settings.trip_lengths) || {};
+  return tl[code] || tl[cityInfo(code).country_code] || null;
+}
+function lengthOk(q, spec) {
+  if (!spec || !q.return_date) return true;
+  const n = q.nights ?? Math.round((d8(q.return_date) - d8(q.depart_date)) / 86400000);
+  if (spec === 'weekend') return n === 2 && (d8(q.depart_date).getDay() + 6) % 7 === 4 && (d8(q.return_date).getDay() + 6) % 7 === 6;
+  return n === +spec - 1;
+}
+
 /* ---------- búsqueda en el navegador sobre los datos publicados ---------- */
 async function staticSearch(p) {
   const st = await sdGet('status.json', {}), routes = new Set((await sdGet('routes.json', { routes: [] })).routes);
@@ -151,16 +163,20 @@ async function staticSearch(p) {
   const from = p.date_from || addDays(todayIso(), 1), to = p.date_to || addDays(todayIso(), 365);
   const opts = [], dated = [];
   for (const o of origins) for (const d of dests) {
-    const key = `${o}-${d}-${params.trip}`;
+    // «Fin de semana (vie → dom)»: datos específicos de fines de semana, si los hay
+    const wkKey = `${o}-${d}-we`, key = p.when === 'weekend' && params.trip === 'rt' && routes.has(wkKey) ? wkKey : `${o}-${d}-${params.trip}`;
     if (!routes.has(key)) continue;
     const cal = await sdGet(`cal/${key}.json`, { quotes: [] });
     for (const q of cal.quotes) {
       if (q.depart_date < from || q.depart_date > to) continue;
       const wd = (d8(q.depart_date).getDay() + 6) % 7;
       if (p.weekdays && p.weekdays.length && !p.weekdays.includes(wd)) continue;
+      const spec = p.use_lengths ? destLength(d) : null;
       if (params.trip === 'rt') {
-        if (p.min_nights && q.nights < p.min_nights) continue;
-        if (p.max_nights && q.nights > p.max_nights) continue;
+        if (spec) { if (!lengthOk(q, spec)) continue; } else {
+          if (p.min_nights && q.nights < p.min_nights) continue;
+          if (p.max_nights && q.nights > p.max_nights) continue;
+        }
         if (p.return_from && q.return_date < p.return_from) continue;
         if (p.return_to && q.return_date > p.return_to) continue;
         if (p.return_weekdays && p.return_weekdays.length && !p.return_weekdays.includes((d8(q.return_date).getDay() + 6) % 7)) continue;

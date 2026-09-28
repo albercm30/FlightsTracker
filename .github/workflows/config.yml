@@ -1,0 +1,52 @@
+# Guarda los ajustes que envías desde tu web (sin usuarios ni claves):
+# al pulsar «Guardar» en la web se abre GitHub con una issue «⚙️ …» ya rellena; al crearla,
+# este workflow comprueba que la has creado tú, escribe config.json y lanza un escaneo.
+name: Guardar ajustes
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: write    # escribir config.json
+  issues: write      # cerrar la issue
+  actions: write     # lanzar el escaneo
+
+jobs:
+  apply:
+    if: github.event.issue.user.login == github.repository_owner && startsWith(github.event.issue.title, '⚙️')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Guardar en config.json
+        id: cfg
+        run: python -m app apply-config
+
+      - name: Subir el cambio
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add config.json
+          if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
+          git commit -m "Ajustes desde la web (#${{ github.event.issue.number }})"
+          git push
+
+      - name: Buscar precios con los nuevos ajustes
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run scan.yml --ref "${{ github.event.repository.default_branch }}" -f resumen=${{ steps.cfg.outputs.resumen || 'false' }}
+
+      - name: Cerrar la issue
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ job.status }}" = "success" ]; then
+            gh issue close ${{ github.event.issue.number }} --comment "✅ Guardado. Tu web se actualizará en unos minutos." -R ${{ github.repository }}
+          else
+            gh issue comment ${{ github.event.issue.number }} --body "❌ No se pudieron guardar los ajustes. Mira el detalle en Actions." -R ${{ github.repository }}
+          fi

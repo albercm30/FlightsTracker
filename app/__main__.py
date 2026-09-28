@@ -1,7 +1,8 @@
 """Comandos (los usa GitHub Actions; no necesitas ejecutarlos tú):
-    python -m app scan           -> escanea precios y envía los avisos por email
+    python -m app scan           -> escanea precios y detecta chollos
+    python -m app daily          -> envía el resumen diario de ofertas
     python -m app export site/   -> genera tu web (GitHub Pages)
-    python -m app test-notify    -> envía un email de prueba
+    python -m app apply-config   -> guarda en config.json los ajustes enviados desde la web
 """
 import json
 import os
@@ -18,7 +19,7 @@ def _summary(res: dict) -> str:
     lines = [f"## {icon} Escaneo de vuelos", "",
              f"**Precios:** {'reales (Travelpayouts)' if get_provider(s).name == 'travelpayouts' else 'simulados'} · **Orígenes:** {', '.join(s.get('origins') or [])} · "
              f"**Rutas:** {res.get('routes', 0)} · **Días con precio:** {res.get('quotes', 0)} · "
-             f"**Avisos nuevos:** {res.get('alerts', 0)} · **Email:** {res.get('notified') or '—'}", ""]
+             f"**Avisos nuevos:** {res.get('alerts', 0)}", ""]
     if res.get("error"):
         lines += [f"> ❌ {res['error']}", ""]
     for trip in db.trips(s):
@@ -47,21 +48,37 @@ def _step_summary(text):
 
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "apply-config":
+        # llamado por el workflow «Guardar ajustes» con la issue creada desde la web
+        from . import config
+        with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as f:
+            event = json.load(f)
+        new = config.from_issue(event)
+        cfg = config.load()
+        cfg.update(new)
+        config.save(cfg)
+        print(json.dumps(cfg, ensure_ascii=False))
+        out = os.environ.get("GITHUB_OUTPUT")
+        if out:  # «Enviarme el resumen ahora» desde la web
+            with open(out, "a", encoding="utf-8") as f:
+                wants = '"_resumen": true' in (event["issue"].get("body") or "")
+                f.write("resumen=" + ("true" if wants else "false") + "\n")
+        return
     init()
-    from . import db
+    from . import config, db
     db.apply_env_config()
+    config.apply(config.load())   # config.json (lo que guardas desde la web) manda
     if cmd == "scan":
         from . import tracker
-        res = tracker.run_scan()
+        res = tracker.run_scan(notify=False)   # los avisos van en el resumen diario
         print(json.dumps(res, ensure_ascii=False, indent=2))
         _step_summary(_summary(res))
         sys.exit(1 if res.get("status") == "error" else 0)
-    elif cmd == "test-notify":
-        from . import notifier
-        res = notifier.send_test(db.get_settings())
+    elif cmd == "daily":
+        from . import daily
+        res = daily.send()
         print(json.dumps(res, ensure_ascii=False))
-        _step_summary("## 📨 Email de prueba\n\n" + "\n".join(f"- **{k}:** {v}" for k, v in res.items()))
-        sys.exit(0 if res.get("email") == "ok" else 1)
+        _step_summary(f"## 📧 Resumen diario\n\n{res}")
     elif cmd == "export":
         from .site import export_site
         out = sys.argv[2] if len(sys.argv) > 2 else "site"

@@ -1,22 +1,25 @@
 # Tu Flight Tracker funciona entero aquí, gratis:
-#   1) busca los precios de tus destinos cada 6 horas
-#   2) te manda por email solo las ofertas que merecen la pena
-#   3) publica tu web en GitHub Pages
-# Todo se configura desde tu web (Ajustes): guarda tus ajustes como variables/secrets de este repositorio.
-# La base de datos (historial de precios y avisos ya enviados) se conserva entre ejecuciones en la caché.
+#   · cada mañana busca los precios de tus destinos
+#   · a las 8:00 (hora de Madrid) te envía el resumen con las mejores ofertas (llega a tu email vía GitHub)
+#   · publica tu web en GitHub Pages
+# Tus destinos y filtros están en config.json (se cambian desde tu web → «Guardar»).
+# La base de datos (historial de precios y chollos ya avisados) se conserva en la caché de Actions.
 name: Escaneo programado
 
 on:
   schedule:
-    - cron: "17 */6 * * *"      # cada 6 horas (hora UTC)
+    # GitHub usa hora UTC: se lanza a las 5:35 y 6:35 UTC y solo sigue la que cae a las 7:35 en Madrid
+    # (verano u invierno). Busca precios y envía el resumen a las 8:00.
+    - cron: "35 5 * * *"
+    - cron: "35 6 * * *"
   workflow_dispatch:
     inputs:
-      demo:
-        description: "Probar con precios SIMULADOS"
+      resumen:
+        description: "Enviarme ahora el resumen de ofertas"
         type: boolean
         default: false
-      test:
-        description: "Solo enviarme un email de prueba"
+      demo:
+        description: "Probar con precios SIMULADOS (no publica la web)"
         type: boolean
         default: false
 
@@ -26,86 +29,82 @@ concurrency:
 
 permissions:
   contents: read
-  pages: write       # publicar tu web en GitHub Pages
+  issues: write      # el resumen diario se publica como issue y GitHub te lo manda por email
+  pages: write       # publicar tu web
   id-token: write
 
 jobs:
   scan:
-    if: github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULED_SCAN == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     env:
       DB_PATH: data/flights.db
       PRICE_PROVIDER: ${{ inputs.demo && 'demo' || 'auto' }}   # sin clave de Travelpayouts -> precios simulados
       CACHE_PREFIX: ${{ inputs.demo && 'flights-db-demo-' || 'flights-db-' }}
-      # --- tus ajustes (se cambian desde la web) ---
       TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
-      EMAIL_TO: ${{ vars.EMAIL_TO || secrets.EMAIL_TO }}
-      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-      SMTP_HOST: ${{ secrets.SMTP_HOST }}
-      SMTP_USER: ${{ secrets.SMTP_USER }}
-      SMTP_FROM: ${{ secrets.SMTP_FROM }}
-      SITE_URL: ${{ vars.SITE_URL }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}   # opcional: si existe, el resumen se envía por Gmail directamente
+      SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/
+      GITHUB_TOKEN: ${{ github.token }}
+      TZ: Europe/Madrid
+      # compatibilidad con versiones anteriores (config.json tiene prioridad)
       ORIGINS: ${{ vars.ORIGINS }}
       DESTINATIONS: ${{ vars.DESTINATIONS }}
-      TRIP_TYPE: ${{ vars.TRIP_TYPE || 'rt' }}
-      MIN_NIGHTS: ${{ vars.MIN_NIGHTS }}
-      MAX_NIGHTS: ${{ vars.MAX_NIGHTS }}
-      PASSENGERS: ${{ vars.PASSENGERS }}
-      BAGGAGE: ${{ vars.BAGGAGE }}
-      RESIDENT_DISCOUNT: ${{ vars.RESIDENT_DISCOUNT }}
-      QUIET_HOURS: ${{ vars.QUIET_HOURS }}
-      MONTHS_AHEAD: ${{ vars.MONTHS_AHEAD }}
-      MIN_DAYS_AHEAD: ${{ vars.MIN_DAYS_AHEAD }}
-      ALERT_LEVEL: ${{ vars.ALERT_LEVEL }}
-      ALERT_DROPS: ${{ vars.ALERT_DROPS }}
-      MAX_STOPS: ${{ vars.MAX_STOPS }}
-      MAX_DURATION_H: ${{ vars.MAX_DURATION_H }}
-      DEP_WINDOWS: ${{ vars.DEP_WINDOWS }}
-      EXCLUDE_AIRLINES: ${{ vars.EXCLUDE_AIRLINES }}
-      TZ: ${{ vars.TZ || 'Europe/Madrid' }}
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Comprobar configuración
+      - name: ¿Es la hora? (7:35 en Madrid)
+        id: gate
         run: |
-          ok=1
-          if [ -z "$ORIGINS" ] && [ "${{ inputs.test }}" != "true" ]; then echo "::error::Aún no has elegido desde dónde sales. Abre tu web → Ajustes."; ok=0; fi
-          if [ -z "$DESTINATIONS" ] && [ "${{ inputs.test }}" != "true" ]; then echo "::error::Aún no tienes destinos. Abre tu web → Mis destinos."; ok=0; fi
-          if [ -z "$TRAVELPAYOUTS_TOKEN" ]; then echo "::warning::Sin clave de Travelpayouts: se usan precios SIMULADOS. Añádela en tu web → Ajustes."; fi
-          if [ -z "$EMAIL_TO" ] || [ -z "$SMTP_PASSWORD" ]; then echo "::warning::Sin email configurado: no recibirás avisos. Configúralo en tu web → Ajustes."; fi
-          [ $ok = 1 ]
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "$(TZ=Europe/Madrid date +%H)" = "07" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "Ahora no toca (cambio de hora): la otra ejecución de hoy es la buena."
+          fi
+
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
 
       - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
         with:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+        if: steps.gate.outputs.run == 'true'
 
       - name: Recuperar base de datos anterior
+        if: steps.gate.outputs.run == 'true'
         uses: actions/cache/restore@v4
         with:
           path: data/flights.db
           key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
           restore-keys: ${{ env.CACHE_PREFIX }}
 
-      - name: ${{ inputs.test && 'Enviar email de prueba' || 'Escanear y avisar' }}
-        run: python -m app ${{ inputs.test && 'test-notify' || 'scan' }}
+      - name: Buscar precios
+        if: steps.gate.outputs.run == 'true'
+        run: python -m app scan
+
+      - name: Enviar el resumen diario (a las 8:00)
+        if: success() && steps.gate.outputs.run == 'true' && (github.event_name == 'schedule' || inputs.resumen)
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            wait=$(( $(TZ=Europe/Madrid date -d 'today 08:00' +%s) - $(date +%s) ))
+            if [ $wait -gt 0 ] && [ $wait -lt 1800 ]; then echo "Esperando $wait s hasta las 8:00…"; sleep $wait; fi
+          fi
+          python -m app daily
 
       - name: Generar tu web
-        if: success() && !inputs.demo && !inputs.test
-        env:
-          SITE_TITLE: ${{ vars.SITE_TITLE }}
+        if: success() && steps.gate.outputs.run == 'true' && !inputs.demo
         run: python -m app export site
 
       - name: Subir tu web
-        if: success() && !inputs.demo && !inputs.test
+        if: success() && steps.gate.outputs.run == 'true' && !inputs.demo
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
       - name: Guardar base de datos
-        if: always() && hashFiles('data/flights.db') != ''
+        if: always() && steps.gate.outputs.run == 'true' && hashFiles('data/flights.db') != ''
         uses: actions/cache/save@v4
         with:
           path: data/flights.db
@@ -114,7 +113,7 @@ jobs:
   # Publica tu web en https://<usuario>.github.io/<repositorio>/
   deploy:
     needs: scan
-    if: ${{ !inputs.demo && !inputs.test }}
+    if: ${{ needs.scan.outputs.run == 'true' && !inputs.demo }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

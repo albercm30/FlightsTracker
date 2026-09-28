@@ -145,6 +145,7 @@ DEFAULT_SETTINGS = {
     "max_duration_h": 0,           # 0 = sin límite (duración de cada trayecto)
     "dep_windows": "",             # franjas de salida: "night,morning,afternoon,evening" ("" = todas)
     "exclude_airlines": [],
+    "trip_lengths": {},            # duración por país o destino: {"AT": 3, "CH": "weekend", "ZA": 10} (días)
     "notify_max_items": 10,
     "watch_change_pct": 3,
     "search_cache_hours": 3,
@@ -158,7 +159,7 @@ DEFAULT_SETTINGS = {
     "smtp_user": "",
     "smtp_password": "",
     "smtp_from": "",
-    "email_to": "",
+    "email_to": "albertocm30.2001@gmail.com",
 }
 
 ENV_MAP = {
@@ -373,6 +374,8 @@ def update_settings(values: dict) -> dict:
                     v = int(float(v))
                 elif isinstance(default, float):
                     v = float(v)
+                elif isinstance(default, dict):
+                    v = v if isinstance(v, dict) else (json.loads(v) if v else {})
                 elif isinstance(default, list):
                     if isinstance(v, str):
                         v = [x.strip().upper() for x in v.split(",") if x.strip()]

@@ -1,9 +1,7 @@
 """Tests (unittest estándar; también funcionan con `pytest`)."""
 import json
 import os
-import shutil
 import statistics
-import subprocess
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
@@ -15,7 +13,6 @@ from app.providers.demo import DemoProvider, easter
 from app.providers.travelpayouts import TravelpayoutsProvider
 
 TODAY = date(2026, 10, 1)
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def q(day, price, o="MAD", d="BKK"):
@@ -228,7 +225,6 @@ class ScanAndSiteTest(TmpDB):
             html = fh.read()
         self.assertIn("<title>Mis vuelos</title>", html)
         self.assertIn('src="static/js/admin.js"', html)
-        self.assertTrue(os.path.exists(os.path.join(out, "static", "js", "sealbox.js")))
 
 
 class EnvConfigTest(TmpDB):
@@ -273,30 +269,49 @@ class EmailTest(TmpDB):
         self.assertIn("error", notifier.send_test({"email_to": ""}))
 
 
-@unittest.skipUnless(shutil.which("node"), "hace falta Node.js")
-class SealBoxTest(unittest.TestCase):
-    """La web cifra tus claves antes de guardarlas en GitHub (crypto_box_seal de libsodium)."""
-    def test_against_libsodium(self):
-        import ctypes
-        import ctypes.util
-        lib = ctypes.util.find_library("sodium")
-        if not lib:
-            self.skipTest("libsodium no disponible")
-        so = ctypes.CDLL(lib)
-        self.assertGreaterEqual(so.sodium_init(), 0)
-        pk, sk = ctypes.create_string_buffer(32), ctypes.create_string_buffer(32)
-        so.crypto_box_keypair(pk, sk)
-        js = ("const S=require(process.argv[1]);globalThis.crypto=require('crypto').webcrypto;"
-              "const pk=Buffer.from(process.argv[2],'hex');"
-              "console.log(JSON.stringify(process.argv.slice(3).map(m=>Buffer.from(S.seal(Buffer.from(m,'utf8'),pk)).toString('hex'))))")
-        msgs = ["", "abcd efgh ijkl mnop", "x" * 200, "ñ✈️"]
-        out = json.loads(subprocess.check_output(["node", "-e", js, os.path.join(ROOT, "app/static/js/sealbox.js"),
-                                                  pk.raw.hex(), *msgs]))
-        for m, h in zip(msgs, out):
-            c = bytes.fromhex(h)
-            buf = ctypes.create_string_buffer(max(1, len(c) - 48))
-            self.assertEqual(so.crypto_box_seal_open(buf, c, ctypes.c_ulonglong(len(c)), pk, sk), 0)
-            self.assertEqual(buf.raw[:len(c) - 48], m.encode())
+class ConfigAndDailyTest(TmpDB):
+    def test_issue_to_config_and_apply(self):
+        from app import config
+        body = ("Pulsa Create\n\n```json\n" + json.dumps({"origins": ["tci"], "destinations": ["VIE", "ZRH", "x1", "CPT"],
+                "trip_lengths": {"AT": "3", "CH": "weekend", "ZA": 10, "b@d": 5, "FR": 99}, "max_stops": 1,
+                "hack": "rm -rf", "_resumen": True}, indent=1) + "\n```")
+        cfg = config.from_issue({"issue": {"body": body}})
+        self.assertEqual(cfg["destinations"], ["VIE", "ZRH", "CPT"])
+        self.assertEqual(cfg["trip_lengths"], {"AT": 3, "CH": "weekend", "ZA": 10})
+        self.assertNotIn("hack", cfg)
+        path = os.path.join(self.tmp.name, "config.json")
+        config.save(cfg, path)
+        config.apply(config.load(path))
+        s = db.get_settings()
+        self.assertEqual((s["origins"], s["max_stops"], s["trip_lengths"]["CH"]), (["TCI"], 1, "weekend"))
+        self.assertEqual({r["code"] for r in db.rows("SELECT code FROM destinations WHERE enabled=1")}, {"VIE", "ZRH", "CPT"})
+        with self.assertRaises(ValueError):
+            config.from_issue({"issue": {"body": "hola"}})
+
+    def test_trip_lengths_weekends_and_daily(self):
+        from app import daily
+        db.update_settings({"origins": ["TCI"], "provider": "demo", "months_ahead": 3, "trip_type": "rt",
+                            "trip_lengths": {"AT": 3, "CH": "weekend", "ZA": 10}})
+        for c in ("VIE", "ZRH", "CPT", "LON"):
+            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES (?,?,1,'x')", (c, c))
+        self.assertEqual(tracker.run_scan(notify=False)["status"], "ok")
+        nights = lambda c, t="rt": {r["nights"] for r in db.rows("SELECT nights FROM quotes WHERE destination=? AND trip=?", (c, t))}
+        self.assertEqual(nights("VIE"), {2})          # Austria: 3 días = 2 noches
+        self.assertEqual(nights("CPT"), {9})          # Sudáfrica: 10 días
+        self.assertEqual(nights("ZRH"), {2})          # Suiza: fin de semana
+        wd = {(date.fromisoformat(r["depart_date"]).weekday(), date.fromisoformat(r["return_date"]).weekday())
+              for r in db.rows("SELECT depart_date, return_date FROM quotes WHERE destination='ZRH' AND trip='rt'")}
+        self.assertEqual(wd, {(4, 6)})
+        self.assertGreater(len(nights("LON")), 2)     # sin duración: la general (3–10 noches)
+        self.assertEqual(nights("LON", "we"), {2})    # + fines de semana vie→dom para la búsqueda
+        data = daily.collect()
+        md = daily.markdown(data, mention="albercm30")
+        self.assertTrue(md.startswith("@albercm30"))
+        self.assertIn("3 días", md)
+        self.assertIn("fin de semana", md)
+        self.assertIn("Ofertas del", daily.title(data))
+        with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "", "GITHUB_REPOSITORY": ""}):
+            self.assertEqual(daily.send()["via"], "none")
 
 
 if __name__ == "__main__":

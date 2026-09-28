@@ -44,7 +44,7 @@ const until = (iso) => {
 const cityName = (code) => (S.catalog.find((c) => c.code === code) || {}).name || code;
 const cityInfo = (code) => S.catalog.find((c) => c.code === code) || { code, name: code, country: '', country_code: '' };
 const stops = (n) => (n === 0 ? 'Directo' : n == null ? '' : `${n} escala${n > 1 ? 's' : ''}`);
-const tripLabel = (t) => (t === 'rt' ? 'Ida y vuelta' : 'Solo ida');
+const tripLabel = (t) => (t === 'rt' ? 'Ida y vuelta' : t === 'we' ? 'Fin de semana' : 'Solo ida');
 const pax = () => Math.max(1, +(S.settings?.passengers || 1));
 
 /* ---------- iconos (trazos estilo Lucide, licencia ISC) ---------- */

@@ -46,6 +46,7 @@ function renderDetail() {
         ${o.resident_price != null ? `<div class="resident" style="margin-top:8px">🏝️ Con descuento de residente ≈ ${money(o.resident_price)}</div>` : ''}</div>
     </div>
     ${meter(o.price, o.range)}
+    ${itinerary(o)}
     <div class="facts">
       <div class="fact"><span>Ida</span><b>${esc(dshort(o.depart_date))}</b></div>
       ${o.return_date ? `<div class="fact"><span>Vuelta</span><b>${esc(dshort(o.return_date))}</b></div><div class="fact"><span>Estancia</span><b>${nights} noches</b></div>` : ''}

@@ -8,7 +8,10 @@ Tu buscador y vigilante de vuelos **personal**. Le dices desde dónde sales (un 
 - 🏖️ calcula tus **puentes y festivos** (nacionales y de tu comunidad) y busca la escapada más barata para cada uno;
 - 🧳 estima el **equipaje incluido** (mochila, cabina, facturada) y el **precio total real** por aerolínea y viajeros;
 - 🏝️ calcula el precio con **descuento de residente** (Canarias y Baleares: 75 % en vuelos nacionales);
-- 🔥 detecta **chollos, bajadas, mínimos históricos** y precios bajo tu objetivo, y te **avisa con antelación** por Telegram, push al móvil (ntfy) o email;
+- 🔥 detecta **chollos de verdad** (no simples bajadas) y te **avisa con antelación** con notificaciones de la app o email: **como mucho un aviso por destino**;
+- ⏱️ muestra la **duración, las escalas y la hora de salida**, con **filtros tipo Skyscanner** (escalas, duración máxima, franja horaria, aerolíneas, días, precio) y orden **Más barato / Mejor / Más rápido**;
+- 🌍 incluye los **195 países** con sus aeropuertos principales (~400 ciudades);
+- 🔑 **modo administrador** en la web pública: desde tu móvil añades o quitas destinos y cambias los avisos;
 - 👀 te deja **vigilar vuelos concretos** (ida o ida y vuelta) y te avisa si suben o bajan;
 - ⚡ comprueba el **precio real en Google Flights** con su rango habitual y su historial (opcional, con SerpApi);
 - 📱 funciona en el **móvil como una app** (PWA) y se puede **publicar online** con contraseña.
@@ -83,18 +86,24 @@ Las APIs de precios **no dicen qué equipaje incluye cada billete**. Flight Trac
 
 Son rangos orientativos de reservar online con antelación. En junio de 2026 la UE acordó que el precio mostrado incluya por defecto una maleta de cabina de 7 kg, pero **aún no se aplica**. Con SerpApi, «Comprobar precio real» pide a Google Flights precios que ya incluyen tu maleta de cabina.
 
-## 🔔 Avisos
+## 🔔 Avisos (solo lo que merece la pena)
 
-| Alerta | Cuándo |
+Tú eliges el nivel en **Ajustes → Qué merece un aviso**:
+
+| Nivel | Qué tiene que cumplir la oferta |
 |---|---|
-| 🏆 Mínimo histórico | El precio más bajo visto nunca en esa ruta |
-| 🔥 Chollo | Un X % por debajo del precio habitual del año (por defecto, 30 %) |
-| 🎯 Bajo tu precio | Por debajo del máximo que pusiste para ese destino |
-| 📉 Bajada | Ese mismo día ha bajado un X % desde el escaneo anterior |
-| 👀 Vuelo vigilado | Una fecha concreta que sigues sube o baja un X %, o baja de tu objetivo |
+| Solo excepcionales | ≥ 40 % bajo el precio habitual de la ruta, top 5 % de fechas y ≥ 25 % más barata que las fechas de alrededor |
+| **Muy buenas** (por defecto) | ≥ 30 % bajo lo habitual, top 10 % y ≥ 18 % bajo las fechas cercanas |
+| Buenas | ≥ 20 % bajo lo habitual, top 20 % y ≥ 10 % bajo las fechas cercanas |
 
-- Solo avisa de vuelos con **al menos N días de antelación** (por defecto, 14), para que te dé tiempo a reservar.
-- Tiene **anti-spam**: no repite un aviso salvo que baje otro X %.
+- «Lo habitual» sale del histórico de la ruta (60 días), no solo de hoy. Comparar con las fechas cercanas evita avisar de algo que solo es «temporada baja».
+- También avisa si un destino baja de **tu precio máximo**, de un **mínimo histórico** con ahorro claro y de los **vuelos que vigilas**.
+- Las **bajadas simples** están desactivadas por defecto.
+- **Anti-spam:**
+  - como mucho **un aviso por destino** en cada escaneo (el mejor de todas sus fechas y orígenes);
+  - ese destino no vuelve a avisar en 14 días salvo que aparezca algo **un 10 % más barato**.
+- En Alertas se agrupan por destino.
+- Solo avisa de vuelos con **al menos N días de antelación** (por defecto, 14).
 - Tiene **horas de silencio** (por ejemplo, `23-8`): lo que se detecte de noche se envía por la mañana.
 - Envía **un único resumen** por escaneo.
 
@@ -103,6 +112,30 @@ Son rangos orientativos de reservar online con antelación. En junio de 2026 la 
 - **Notificaciones de la propia app (Web Push):** en Ajustes → Avisos pulsa «Activar en este ordenador». Para el móvil: abre la web pública → Preferencias → «Activar avisos en este móvil» y pega el código en tu app del ordenador. En iPhone, primero «Añadir a pantalla de inicio» (iOS 16.4 o superior).
 - **Email:** tu Gmail y una [contraseña de aplicación](https://myaccount.google.com/apppasswords).
 - Opcionales: Telegram y ntfy.
+
+## ⏱️ Duración, escalas y filtros
+
+Cada vuelo muestra la **duración** de la ida y de la vuelta, las **escalas** y la **hora de salida**. Al abrirlo verás un itinerario visual.
+
+- **En las búsquedas (Filtros):**
+  - escalas (directo, máx. 1, máx. 2);
+  - duración máxima por trayecto;
+  - hora de salida de la ida y de la vuelta (madrugada, mañana, tarde, noche);
+  - días de la semana y precio máximo.
+- **En los resultados:**
+  - el orden **Más barato / Mejor / Más rápido**. «Mejor» combina precio, horas de viaje y escalas, como Skyscanner;
+  - filtros rápidos con el precio «desde» de cada opción: escalas, franja y aerolíneas.
+- **En Ajustes → Filtros de los escaneos:** lo que se vigila y avisa automáticamente. Por ejemplo, «nunca más de 1 escala ni más de 16 h» o «sin Ryanair».
+
+## 🔑 Gestionar la web pública desde el móvil
+
+1. Abre la web pública con `#avisos` al final una vez (así sabe que ese móvil es tuyo).
+2. Ve a **Destinos** y conecta tu GitHub con un *fine-grained token* de tu repositorio (permisos **Actions** y **Variables**: Read and write). El token se guarda solo en ese navegador; nunca se publica.
+3. Desde ahí puedes:
+   - añadir o quitar destinos (ciudades, países enteros o temáticas), pulsar **Guardar y actualizar la web**, y en unos minutos tendrás los precios nuevos;
+   - en **Preferencias → Mis avisos**, cambiar el nivel de avisos y los filtros.
+
+Cuando vuelvas a sincronizar desde la app del ordenador, esta recoge los cambios que hiciste en el móvil.
 
 ## 📱 En el iPhone como app
 
@@ -143,7 +176,8 @@ app/
   tracker.py         escaneos, alertas, motor de búsqueda (Mejor día / Explorar / Festivos), consejos
   airlines.py        aerolíneas y políticas de equipaje (estimadas)
   holidays.py        festivos de España y cálculo de puentes
-  catalog.py         ~150 ciudades con coordenadas, temáticas, orígenes de España
+  catalog.py         ciudades con coordenadas, temáticas, orígenes de España
+  catalog_world.py   resto del mundo: 195 países y sus aeropuertos principales
   notifier.py        Telegram, ntfy, email (+ horas de silencio)
   scheduler.py       escaneo automático
   db.py              SQLite, ajustes y migraciones automáticas

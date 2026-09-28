@@ -11,6 +11,7 @@ libsodium, vía PyNaCl), igual que hace GitHub CLI: nadie más puede leerlos.
 import base64
 import os
 import re
+from datetime import datetime
 
 import requests
 
@@ -89,6 +90,10 @@ class GitHub:
         r = self._req("GET", "/actions/variables", params={"per_page": 50})
         return {v["name"]: v["value"] for v in r.json().get("variables", [])}
 
+    def variables_full(self):
+        r = self._req("GET", "/actions/variables", params={"per_page": 50})
+        return {v["name"]: v for v in r.json().get("variables", [])}
+
     def secret_names(self):
         r = self._req("GET", "/actions/secrets", params={"per_page": 50})
         return {s["name"] for s in r.json().get("secrets", [])}
@@ -163,6 +168,12 @@ def desired_variables(s: dict) -> dict:
         "MONTHS_AHEAD": s.get("months_ahead"),
         "DIRECT_ONLY": "true" if s.get("direct_only") else "",
         "DEAL_PCT": s.get("deal_pct"),
+        "ALERT_LEVEL": s.get("alert_level"),
+        "ALERT_DROPS": "true" if s.get("alert_drops") else "false",
+        "MAX_STOPS": s.get("max_stops"),
+        "MAX_DURATION_H": s.get("max_duration_h") or "",
+        "DEP_WINDOWS": s.get("dep_windows"),
+        "EXCLUDE_AIRLINES": ",".join(s.get("exclude_airlines") or []),
         "MIN_DAYS_AHEAD": s.get("min_days_ahead"),
         "PUBLISH_SITE": "true" if s.get("publish_site") else "false",
         "VAPID_PUBLIC_KEY": s.get("vapid_public"),
@@ -228,8 +239,60 @@ def status(session=None) -> dict:
     }
 
 
+# Variables que también se pueden cambiar desde la web pública (modo administrador del móvil)
+REMOTE_EDITABLE = {
+    "ALERT_LEVEL": "alert_level", "ALERT_DROPS": "alert_drops", "MAX_STOPS": "max_stops",
+    "MAX_DURATION_H": "max_duration_h", "DEP_WINDOWS": "dep_windows", "EXCLUDE_AIRLINES": "exclude_airlines",
+}
+
+
+def _ts(v):
+    try:
+        return datetime.fromisoformat((v or "").replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def pull_remote(gh, s) -> list:
+    """Trae a la app local lo que cambiaste desde el móvil (destinos y ajustes de avisos) si es
+    más reciente que la última sincronización. Devuelve la lista de variables aplicadas."""
+    since = _ts(s.get("cloud_synced_at"))
+    if not since:
+        return []
+    try:
+        remote = gh.variables_full()
+    except CloudError:
+        return []
+    applied, vals = [], {}
+    for name, v in remote.items():
+        t = _ts(v.get("updated_at"))
+        if not t or t <= since:
+            continue
+        if name == "DESTINATIONS":
+            codes = [c.strip().upper() for c in (v.get("value") or "").split(",") if c.strip()]
+            if codes:
+                from . import catalog
+                with db.connect() as c:
+                    for code in codes:
+                        info = catalog.info(code)
+                        c.execute("INSERT OR IGNORE INTO destinations(code, name, country, enabled, created_at) "
+                                  "VALUES (?,?,?,1,?)", (code, info["name"], info["country"], db.now_iso()))
+                    c.execute(f"UPDATE destinations SET enabled = CASE WHEN code IN ({','.join('?' * len(codes))}) "
+                              "THEN 1 ELSE 0 END", codes)
+                applied.append(name)
+        elif name in REMOTE_EDITABLE:
+            vals[REMOTE_EDITABLE[name]] = v.get("value")
+            applied.append(name)
+    if vals:
+        db.update_settings(vals)
+    return applied
+
+
 def sync(enable_schedule: bool = True, session=None) -> dict:
     gh, s = _client(session)
+    pulled = pull_remote(gh, s)
+    if pulled:
+        s = db.get_settings()
     try:  # recordar la dirección de la web pública para que los avisos la abran al tocarlos
         pages = gh.pages()
         if pages and pages.get("html_url") and pages["html_url"] != s.get("site_url"):
@@ -257,8 +320,9 @@ def sync(enable_schedule: bool = True, session=None) -> dict:
         except CloudError as e:
             pages_msg = (f"No he podido activar GitHub Pages automáticamente ({e}). Actívalo en Settings → Pages → "
                          "Source: «GitHub Actions».")
+    db.update_settings({"cloud_synced_at": db.now_iso()})
     return {"ok": True, "variables": done_vars, "secrets": done_secrets, "schedule": enable_schedule,
-            "pages_warning": pages_msg}
+            "pages_warning": pages_msg, "pulled": pulled}
 
 
 def make_public(session=None):

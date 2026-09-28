@@ -98,6 +98,37 @@ function staticAdvice(price, depart, o, d, prices) {
   return { verdict, level, points, score: Math.max(1, Math.min(99, Math.round(base * 0.75 + (score + 2) * 5))), lead_days: lead };
 }
 
+/* ---------- filtros tipo Skyscanner (mismo criterio que el servidor) ---------- */
+function staticQuoteOk(q, p) {
+  const ms = p.max_stops == null || p.max_stops === '' ? -1 : +p.max_stops;
+  if (ms >= 0 && ((q.transfers || 0) > ms || (q.return_date && (q.return_transfers || 0) > ms))) return false;
+  const mm = (+p.max_duration_h || 0) * 60;
+  if (mm && ((q.duration && q.duration > mm) || (q.return_duration && q.return_duration > mm))) return false;
+  if ((p.dep_windows || []).length && q.dep_time && !p.dep_windows.includes(winOf(q.dep_time))) return false;
+  if ((p.ret_windows || []).length && q.return_date && q.ret_time && !p.ret_windows.includes(winOf(q.ret_time))) return false;
+  const al = (q.airline || '').toUpperCase();
+  if ((p.airlines || []).length && !p.airlines.includes(al)) return false;
+  if ((p.exclude_airlines || []).includes(al)) return false;
+  return true;
+}
+function staticFacets(list) {
+  const stops = {}, al = {}, win = {}, durs = [];
+  const mn = (o, k, v) => { o[k] = Math.min(o[k] ?? v, v); };
+  list.forEach((q) => {
+    const n = q.return_date ? Math.max(q.transfers || 0, q.return_transfers || 0) : (q.transfers || 0);
+    mn(stops, String(Math.min(n, 2)), q.price);
+    if (q.airline) mn(al, q.airline, q.price);
+    if (q.dep_time) mn(win, winOf(q.dep_time), q.price);
+    if (q.duration) durs.push(Math.max(q.duration, q.return_duration || 0));
+  });
+  return { stops, windows: win, duration: durs.length ? [Math.min(...durs), Math.max(...durs)] : null,
+    airlines: Object.entries(al).map(([code, min]) => ({ code, min, name: (S.meta.airlines || {})[code] || code })).sort((a, b) => a.min - b.min).slice(0, 30) };
+}
+function staticBestScore(r) {
+  const h = ((r.duration || 0) + (r.return_duration || 0)) / 60, st = (r.transfers || 0) + (r.return_transfers || 0);
+  return r.price_total / Math.max(1, r.pax || 1) + 12 * h + 20 * st;
+}
+
 /* ---------- búsqueda en el navegador sobre los datos publicados ---------- */
 async function staticSearch(p) {
   const st = await sdGet('status.json', {}), routes = new Set((await sdGet('routes.json', { routes: [] })).routes);
@@ -111,11 +142,15 @@ async function staticSearch(p) {
     if (p.region) dests = dests.filter((c) => cityInfo(c).region === p.region);
   }
   dests = dests.filter((c) => favs.includes(c));
-  const params = { ...p, trip: p.trip === 'ow' ? 'ow' : 'rt', pax: p.pax || 1, baggage: p.baggage || 'personal' };
+  const dflt = S.settings || {};
+  const params = { ...p, trip: p.trip === 'ow' ? 'ow' : 'rt', pax: p.pax || 1, baggage: p.baggage || 'personal', sort: p.sort || 'price',
+    max_stops: p.max_stops ?? (p.direct_only ? 0 : (dflt.max_stops ?? -1)), max_duration_h: p.max_duration_h ?? (dflt.max_duration_h || 0),
+    dep_windows: p.dep_windows ?? (dflt.dep_windows || '').split(',').filter(Boolean), ret_windows: p.ret_windows || [],
+    airlines: p.airlines || [], exclude_airlines: p.exclude_airlines ?? (dflt.exclude_airlines || []) };
   if (!(st.trips || []).includes(params.trip)) params.trip = (st.trips || ['rt'])[0];
   if (!dests.length) return { found: false, params, error: `Esta web solo tiene precios de: ${favs.map(cityName).join(', ')}.` };
   const from = p.date_from || addDays(todayIso(), 1), to = p.date_to || addDays(todayIso(), 365);
-  const opts = [];
+  const opts = [], dated = [];
   for (const o of origins) for (const d of dests) {
     const key = `${o}-${d}-${params.trip}`;
     if (!routes.has(key)) continue;
@@ -131,13 +166,16 @@ async function staticSearch(p) {
         if (p.return_to && q.return_date > p.return_to) continue;
         if (p.return_weekdays && p.return_weekdays.length && !p.return_weekdays.includes((d8(q.return_date).getDay() + 6) % 7)) continue;
       }
-      if (p.direct_only && (q.transfers || q.return_transfers)) continue;
+      dated.push(q);
+      if (!staticQuoteOk(q, params)) continue;
       const h = hydrate(q, { origin: o, destination: d, trip: params.trip }, params.pax, params.baggage);
       if (p.max_price && h.price_pp_bags > p.max_price) continue;
       opts.push(h);
     }
   }
-  if (!opts.length) return { found: false, params, errors: [], error: 'No hay precios publicados para esa combinación. Prueba con otras fechas, más noches o sin filtros.' };
+  const facets = staticFacets(dated);
+  if (!opts.length) return { found: false, params, errors: [], facets, filtered_out: dated.length, error: dated.length ? '' : 'No hay precios publicados para esa combinación. Prueba con otras fechas, más noches o sin filtros.' };
+  opts.forEach((o) => { o.dur_total = (o.duration || 0) + (o.return_duration || 0) || null; o.best_score = staticBestScore(o); });
   opts.sort((a, b) => a.price_total - b.price_total || a.depart_date.localeCompare(b.depart_date));
   const all = opts.map((o) => o.price).sort((a, b) => a - b);
   const q25 = all[Math.floor(all.length * 0.25)], q75 = all[Math.floor(all.length * 0.75)];
@@ -150,13 +188,17 @@ async function staticSearch(p) {
   Object.keys(ranges).forEach((k) => { const v = ranges[k].sort((a, b) => a - b); ranges[k] = [v[0], v[Math.floor(v.length / 2)], v[v.length - 1]]; });
   opts.forEach((o) => { o.range = ranges[o.destination]; o.savings = median ? 1 - o.price / median : 0; });
   const byDest = {}; opts.forEach((o) => { if (!byDest[o.destination]) { const c = cityInfo(o.destination); byDest[o.destination] = { ...o, options: 0, lat: c.lat, lon: c.lon }; } byDest[o.destination].options++; });
-  const seen = new Set(), top = [];
-  for (const o of opts) { const k = `${o.depart_date}|${o.return_date}|${o.destination}`; if (seen.has(k)) continue; seen.add(k); top.push(o); if (top.length >= 20) break; }
-  const best = opts[0];
+  const orders = { price: (a, b) => a.price_total - b.price_total, duration: (a, b) => (a.dur_total || 1e9) - (b.dur_total || 1e9) || a.price_total - b.price_total, best: (a, b) => a.best_score - b.best_score };
+  const topBy = (f) => { const seen = new Set(), out = []; for (const o of opts.slice().sort(f)) { const k = `${o.depart_date}|${o.return_date}|${o.destination}`; if (seen.has(k)) continue; seen.add(k); out.push(o); if (out.length >= 20) break; } return out; };
+  const tops = Object.fromEntries(Object.entries(orders).map(([k, f]) => [k, topBy(f)]));
+  const top = tops[params.sort] || tops.price;
+  tops.duration.concat(tops.best).forEach((o) => { o.savings = median ? 1 - o.price / median : 0; });
+  const summary = Object.fromEntries(Object.entries(tops).map(([k, v]) => [k, v.length ? { price: v[0].price_total, dur: v[0].dur_total, pax: params.pax } : null]));
+  const best = top[0];
   return {
-    found: true, params, best, top, by_month: Object.keys(byMonth).sort().map((k) => byMonth[k]),
+    found: true, params, best, top, tops, summary, facets, by_month: Object.keys(byMonth).sort().map((k) => byMonth[k]),
     by_destination: Object.values(byDest).sort((a, b) => a.price_total - b.price_total),
-    days: days.map((r) => ({ date: r.depart_date, price: r.price, total: r.price_total, origin: r.origin, destination: r.destination, return_date: r.return_date, nights: r.nights })),
+    days: days.map((r) => ({ date: r.depart_date, price: r.price, total: r.price_total, origin: r.origin, destination: r.destination, return_date: r.return_date, nights: r.nights, stops: r.transfers, dur: r.dur_total })),
     matrix: null, median, history: [], routes: origins.length * dests.length, options: opts.length, errors: [], provider: st.provider,
     advice: staticAdvice(best.price, best.depart_date, best.origin, best.destination, opts.filter((o) => o.destination === best.destination).map((o) => o.price)),
   };

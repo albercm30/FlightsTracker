@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS quotes (
     airline      TEXT,
     transfers    INTEGER,
     return_transfers INTEGER,
+    duration     INTEGER,
+    return_duration INTEGER,
+    dep_time     TEXT,
+    ret_time     TEXT,
     link         TEXT,
     provider     TEXT,
     first_seen   TEXT NOT NULL,
@@ -133,10 +137,18 @@ DEFAULT_SETTINGS = {
     "request_delay_s": 0.5,
     "min_days_ahead": 14,          # solo avisar de vuelos que salen dentro de >= N días
     "max_days_ahead": 365,
+    "alert_level": "muy_buena",    # excepcional | muy_buena | buena: qué merece un aviso
+    "alert_drops": False,          # avisar también de simples bajadas de precio (normalmente no)
     "drop_pct": 15,
-    "deal_pct": 30,
-    "realert_pct": 5,
-    "max_alerts_per_route": 3,
+    "deal_pct": 30,                # (heredado; ahora manda alert_level)
+    "realert_pct": 10,             # repetir aviso de un destino solo si baja otro X %
+    "realert_days": 14,            # ... dentro de estos días
+    "max_alerts_per_route": 1,     # (heredado) máx. 1 aviso por destino y escaneo
+    # filtros por defecto de los escaneos (como en Skyscanner)
+    "max_stops": -1,               # -1 cualquiera | 0 directo | 1 | 2
+    "max_duration_h": 0,           # 0 = sin límite (duración de cada trayecto)
+    "dep_windows": "",             # franjas de salida: "night,morning,afternoon,evening" ("" = todas)
+    "exclude_airlines": [],
     "notify_max_items": 10,
     "watch_change_pct": 3,
     "search_cache_hours": 3,
@@ -150,6 +162,7 @@ DEFAULT_SETTINGS = {
     "site_url": "",                # dirección de la web pública (para abrirla al tocar un aviso)
     "github_token": "",
     "github_repo": "",
+    "cloud_synced_at": "",         # última sincronización con GitHub (para traer cambios hechos desde el móvil)
     "publish_site": True,
     "site_title": "Chollos de vuelos",
     "telegram_bot_token": "",
@@ -196,6 +209,12 @@ ENV_MAP = {
     "direct_only": "DIRECT_ONLY",
     "deal_pct": "DEAL_PCT",
     "min_days_ahead": "MIN_DAYS_AHEAD",
+    "alert_level": "ALERT_LEVEL",
+    "alert_drops": "ALERT_DROPS",
+    "max_stops": "MAX_STOPS",
+    "max_duration_h": "MAX_DURATION_H",
+    "dep_windows": "DEP_WINDOWS",
+    "exclude_airlines": "EXCLUDE_AIRLINES",
 }
 
 SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password", "github_token",
@@ -206,6 +225,8 @@ CHOICES = {
     "provider": {"auto", "travelpayouts", "demo"},
     "currency": {"eur", "usd", "gbp"},
     "resident_discount": {"", "canarias", "baleares"},
+    "alert_level": {"excepcional", "muy_buena", "buena"},
+    "max_stops": {-1, 0, 1, 2},
 }
 
 
@@ -225,10 +246,12 @@ def _migrate(c):
         c.execute("DROP TABLE quotes")
     if "watches" in tables and "trip" not in _columns(c, "watches"):
         c.execute("ALTER TABLE watches RENAME TO watches_v1")
+    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
     for table, cols in {
         "route_stats": {"trip": "TEXT NOT NULL DEFAULT 'ow'"},
         "quote_history": {"trip": "TEXT NOT NULL DEFAULT 'ow'"},
         "alerts": {"trip": "TEXT NOT NULL DEFAULT 'ow'", "airline": "TEXT"},
+        "quotes": {"duration": "INTEGER", "return_duration": "INTEGER", "dep_time": "TEXT", "ret_time": "TEXT"},
     }.items():
         if table in tables:
             have = _columns(c, table)
@@ -259,6 +282,11 @@ def _post_migrate(c):
                   (json.dumps("ow" if one_way else "rt"),))
         c.execute("DELETE FROM settings WHERE key='one_way'")
         c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('onboarded', 'true')")
+    # v4: avisos menos insistentes (solo si el usuario no los había cambiado)
+    if not c.execute("SELECT 1 FROM settings WHERE key='_v4'").fetchone():
+        c.execute("UPDATE settings SET value='10' WHERE key='realert_pct' AND value='5'")
+        c.execute("UPDATE settings SET value='1' WHERE key='max_alerts_per_route' AND value='3'")
+        c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('_v4', 'true')")
 
 
 def init(path: str):
@@ -275,7 +303,14 @@ def init(path: str):
                 continue
             env = os.environ.get(ENV_MAP.get(k, ""), "") if k in ENV_MAP else ""
             if env:
-                v = int(env) if isinstance(v, int) and not isinstance(v, bool) else env
+                if isinstance(v, bool):
+                    v = env.strip().lower() in ("1", "true", "yes", "on", "si", "sí")
+                elif isinstance(v, int):
+                    v = int(float(env))
+                elif isinstance(v, list):
+                    v = [x.strip().upper() for x in env.split(",") if x.strip()]
+                else:
+                    v = env
             c.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (k, json.dumps(v)))
         if "origins" not in existing and os.environ.get("ORIGINS"):
             origins = [o.strip().upper() for o in os.environ["ORIGINS"].split(",") if o.strip()]

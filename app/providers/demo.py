@@ -114,6 +114,22 @@ def fare_ladder(p: float) -> float:
     return max(12, step * math.ceil(p / step) - 1)
 
 
+# Horas de salida típicas (las primeras y últimas suelen ser las más baratas)
+_SLOTS = ["00:55", "02:10", "06:05", "06:40", "07:15", "08:30", "09:45", "11:10", "12:35", "14:20", "15:50", "17:25",
+          "18:40", "20:15", "21:30", "22:50"]
+
+
+def leg_details(origin: str, dest: str, d: date, transfers: int):
+    """Duración (min) y hora de salida simuladas de un trayecto."""
+    km = catalog.distance_km(origin, dest)
+    air = km / 780 * 60 + 35                       # tiempo en el aire + rodaje/despegue
+    detour = 1.0 + 0.12 * (transfers or 0)          # la escala no está en línea recta
+    lay = sum(70 + 170 * _u("lay", origin, dest, d, i) for i in range(transfers or 0))
+    minutes = int(round((air * detour + lay) / 5) * 5)
+    slot = _SLOTS[_h("slot", origin, dest, d) % len(_SLOTS)]
+    return max(40, minutes), slot
+
+
 class DemoProvider(PriceProvider):
     name = "demo"
 
@@ -179,7 +195,7 @@ class DemoProvider(PriceProvider):
             if start * 30 + 20 <= lead <= start * 30 + 110:
                 p *= 0.72
         # Tarifa flash / error (muy rara, dura unas horas)
-        if _u("flash", origin, dest, d, int(self.hours // 8)) < 0.003:
+        if _u("flash", origin, dest, d, int(self.hours // 8)) < 0.0012:
             p *= 0.52
         transfers = 0
         if long_haul:
@@ -219,14 +235,16 @@ class DemoProvider(PriceProvider):
                 if not leg:
                     continue
                 price, airline, transfers = leg
+                dur, dep = leg_details(o, t, d, transfers)
                 res.append(Quote(origin=o, destination=t, depart_date=d.isoformat(), price=round(price * fx),
-                                 airline=airline, transfers=transfers,
+                                 airline=airline, transfers=transfers, duration=dur, dep_time=dep,
                                  link=booking_links(o, t, d.isoformat())["aviasales"], provider=self.name))
             return res
         # Ida y vuelta: combina la ida con cada vuelta posible dentro del rango de noches
         long_haul = catalog.is_long_haul(o, t)
         rt_factor = 0.90 if long_haul else 0.98
         back_cache = {}
+        out_details = {}
         res = []
         for d, leg in out_legs.items():
             if not leg:
@@ -239,9 +257,12 @@ class DemoProvider(PriceProvider):
                 if not back:
                     continue
                 price = fare_ladder((leg[0] + back[0]) * rt_factor)
+                dur, dep = out_details.setdefault(d, leg_details(o, t, d, leg[2]))
+                rdur, rdep = leg_details(t, o, r, back[2])
                 res.append(Quote(origin=o, destination=t, depart_date=d.isoformat(), return_date=r.isoformat(),
                                  price=round(price * fx), airline=leg[1], transfers=leg[2],
-                                 return_transfers=back[2],
+                                 return_transfers=back[2], duration=dur, return_duration=rdur,
+                                 dep_time=dep, ret_time=rdep,
                                  link=booking_links(o, t, d.isoformat(), r.isoformat())["aviasales"],
                                  provider=self.name))
         return res

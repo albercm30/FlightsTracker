@@ -20,6 +20,18 @@ log = logging.getLogger(__name__)
 API_URL = "https://api.travelpayouts.com/aviasales/v3/prices_for_dates"
 
 
+def _int(v):
+    try:
+        return int(v) if v not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _hhmm(v):
+    v = v or ""
+    return v[11:16] if len(v) >= 16 and v[13] == ":" else None
+
+
 class TravelpayoutsError(RuntimeError):
     pass
 
@@ -87,6 +99,10 @@ class TravelpayoutsProvider(PriceProvider):
             if not dep or item.get("price") is None:
                 continue
             ret = (item.get("return_at") or "")[:10] or None
+            dur_to = item.get("duration_to")
+            dur_back = item.get("duration_back")
+            if dur_to is None and item.get("duration") is not None and not ret:
+                dur_to = item.get("duration")
             link = item.get("link") or ""
             if link:
                 link = "https://www.aviasales.com" + link
@@ -103,6 +119,10 @@ class TravelpayoutsProvider(PriceProvider):
                 return_transfers=item.get("return_transfers"),
                 link=link,
                 provider=self.name,
+                duration=_int(dur_to),
+                return_duration=_int(dur_back) if ret else None,
+                dep_time=_hhmm(item.get("departure_at")),
+                ret_time=_hhmm(item.get("return_at")) if ret else None,
                 extra={"duration": item.get("duration"), "flight_number": item.get("flight_number")},
             ))
         return out

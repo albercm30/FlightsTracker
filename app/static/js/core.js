@@ -228,7 +228,7 @@ function attachAC(input, { countries = true, anywhere = false, onPick } = {}) {
     const cities = (q ? S.catalog.map((c) => [score(c), c]).filter(([sc]) => sc < 9).sort((a, b) => a[0] - b[0]).map(([, c]) => c) : S.catalog).slice(0, 8);
     cities.forEach((c) => items.push({ type: 'city', c, label: c.name, sub: c.country, value: `${c.name} (${c.code})` }));
     if (countries) S.countries.filter((c) => q && norm(c.country).includes(nq)).slice(0, 4)
-      .forEach((c) => items.push({ type: 'country', cc: c.country_code, label: `${c.country} · todo el país`, sub: `${c.count} ciudades`, value: `${c.country} (país)` }));
+      .forEach((c) => items.push({ type: 'country', cc: c.country_code, label: c.via ? c.country : `${c.country} · todo el país`, sub: c.via ? `vía ${c.via_name} (${c.via})` : `${c.count} ${c.count === 1 ? 'aeropuerto' : 'aeropuertos'}`, value: c.via ? `${c.via_name} (${c.via})` : `${c.country} (país)` }));
     if (/^[a-z]{3}$/i.test(q) && !cities.some((c) => c.code.toLowerCase() === q)) items.push({ type: 'code', label: `Usar código ${q.toUpperCase()}`, value: q.toUpperCase() });
     if (!items.length) return close();
     const html = items.map((it, i) => `<div data-i="${i}" class="${i === idx ? 'on' : ''}">${it.type === 'city' ? flag(it.c.country_code) : it.type === 'country' ? flag(it.cc) : '<span class="flag">✈</span>'}<span class="lbl"><b>${esc(it.label)}</b>${it.sub ? `<span class="muted"> · ${esc(it.sub)}</span>` : ''}</span>${it.c ? `<span class="code">${it.c.code}</span>` : ''}</div>`).join('');
@@ -258,7 +258,7 @@ function resolvePlace(text) {
   const m = t.match(/\(([A-Z]{3})\)\s*$/); if (m) return { destinations: [m[1]] };
   if (/^[A-Za-z]{3}$/.test(t)) return { destinations: [t.toUpperCase()] };
   const low = t.toLowerCase().replace(/\s*\(país\)$/, '');
-  const c = S.countries.find((x) => x.country.toLowerCase() === low); if (c) return { country: c.country_code };
+  const c = S.countries.find((x) => x.country.toLowerCase() === low); if (c) return c.via ? { destinations: [c.via] } : { country: c.country_code };
   const city = S.catalog.find((x) => x.name.toLowerCase() === low) || S.catalog.find((x) => x.name.toLowerCase().startsWith(low));
   if (city) return { destinations: [city.code] };
   return {};
@@ -338,6 +338,32 @@ function bagChips(b) {
   if (!b) return '';
   const c = (st, icon, name) => `<span class="bchip ${st === 'included' ? 'inc' : st === 'fee' ? 'fee' : 'dep'}" title="${name}: ${st === 'included' ? 'incluida' : st === 'fee' ? 'de pago' : 'según tarifa'}">${icon}${st === 'included' ? '✓' : st === 'fee' ? '€' : '?'}</span>`;
   return `<span class="bchips">${c('included', '🎒', 'Mochila')}${c(b.cabin, '🧳', 'Maleta de cabina')}${c(b.checked, '🛄', 'Maleta facturada')}</span>`;
+}
+/* ---------- duración, escalas y horarios ---------- */
+function durShort(m) { if (!m) return ''; const h = Math.floor(m / 60), mm = m % 60; return h ? `${h} h${mm ? ' ' + String(mm).padStart(2, '0') : ''}` : `${mm} min`; }
+const WIN_ICON = { night: '🌙', morning: '🌅', afternoon: '☀️', evening: '🌆' };
+const WIN_RANGE = { night: '00–06', morning: '06–12', afternoon: '12–18', evening: '18–24' };
+function winOf(t) { if (!t) return null; const h = +t.slice(0, 2); return h < 6 ? 'night' : h < 12 ? 'morning' : h < 18 ? 'afternoon' : 'evening'; }
+/* Línea compacta: «⏱ 2 h 35 · 🕖 07:15» */
+function durChip(o) {
+  const parts = [];
+  if (o.duration) parts.push(`<span class="dur" title="Duración de la ida${o.return_duration ? ` · vuelta ${durShort(o.return_duration)}` : ''}">⏱ ${durShort(o.duration)}</span>`);
+  if (o.dep_time) parts.push(`<span class="dtime" title="Hora de salida">${WIN_ICON[winOf(o.dep_time)] || ''} ${esc(o.dep_time)}</span>`);
+  return parts.join('');
+}
+/* Itinerario visual (detalle): una fila por trayecto con escalas como puntos */
+function itinerary(o) {
+  const leg = (lbl, from, to, t, dur, stops, date) => {
+    if (dur == null && t == null && stops == null) return '';
+    const dots = stops ? Array.from({ length: stops }, () => '<i class="stopdot"></i>').join('') : '';
+    return `<div class="itin-leg"><div class="il-l"><span class="tiny muted">${lbl}</span><b>${esc(t || '—')}</b><span class="tiny muted">${esc(dshort(date))}</span></div>
+      <div class="il-m"><span class="small"><b>${dur ? durShort(dur) : ''}</b></span><div class="il-line"><i class="end"></i>${dots}<i class="end"></i></div>
+        <span class="tiny ${stops === 0 ? 'good' : 'muted'}">${stops === 0 ? 'Directo' : stops != null ? `${stops} escala${stops > 1 ? 's' : ''}` : ''}</span></div>
+      <div class="il-r"><b>${esc(from)} → ${esc(to)}</b></div></div>`;
+  };
+  const a = leg('IDA', o.origin, o.destination, o.dep_time, o.duration, o.transfers, o.depart_date);
+  const b = o.return_date ? leg('VUELTA', o.destination, o.origin, o.ret_time, o.return_duration, o.return_transfers, o.return_date) : '';
+  return a || b ? `<div class="itin">${a}${b}</div>` : '';
 }
 function dateChip(d, r, n) {
   return `<span class="datechip">📅 ${esc(dshort(d))}${r ? ` <b>→</b> ${esc(dshort(r))} <em>${n ?? ''}${n != null ? 'n' : ''}</em>` : ''}</span>`;

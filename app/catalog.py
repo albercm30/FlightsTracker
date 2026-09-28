@@ -333,3 +333,36 @@ def explore_codes(region: str = "", theme: str = "", exclude=()):
         codes = [c for c in codes if BY_CODE[c]["region"] == region]
     ex = {e.upper() for e in exclude}
     return [c for c in dict.fromkeys(codes) if c not in ex]
+
+
+# ---------------------------------------------------------------------------
+# Catálogo mundial: 195 países (ver catalog_world.py)
+from .catalog_world import COUNTRY_NAMES, EXTRA, NEARBY  # noqa: E402
+
+for _c, _n, _p, _cc, _r, _lat, _lon in EXTRA:
+    if _c not in BY_CODE:
+        _row = {"code": _c, "name": _n, "country": _p, "country_code": _cc, "region": _r}
+        CITIES.append(_row)
+        BY_CODE[_c] = _row
+    COORDS.setdefault(_c, (_lat, _lon))
+
+
+def countries():
+    seen = {}
+    for c in CITIES:
+        cc = c["country_code"]
+        name = COUNTRY_NAMES.get(cc, c["country"])
+        seen.setdefault(cc, {"country_code": cc, "country": name, "count": 0})
+        seen[cc]["count"] += 1
+    for cc, (name, via, _r) in NEARBY.items():
+        seen.setdefault(cc, {"country_code": cc, "country": name, "count": 0, "via": via,
+                             "via_name": BY_CODE.get(via, {}).get("name", via)})
+    return sorted(seen.values(), key=lambda x: x["country"])
+
+
+def cities_in_country(country_code: str):
+    cc = country_code.upper()
+    out = [c for c in CITIES if c["country_code"] == cc]
+    if not out and cc in NEARBY:
+        out = [BY_CODE[NEARBY[cc][1]]]
+    return out

@@ -41,6 +41,21 @@ Es gratis en repositorios **públicos**. Tus tokens se guardan como *secrets* ci
 
 Cada vez que guardes ajustes, la app vuelve a sincronizar sola. Si cambias destinos, pulsa **Sincronizar**.
 
+**Desde el móvil, sin el ordenador:**
+
+1. Abre la web pública con `#avisos` al final.
+2. Ve a **Destinos** y conecta un *fine-grained token* limitado a tu repositorio, con permisos **Actions** y **Variables** en «Read and write».
+3. Ya puedes añadir o quitar destinos y cambiar los avisos. La app del ordenador recoge esos cambios la próxima vez que sincronice.
+
+Variables opcionales para los avisos y filtros (también se ponen solas al sincronizar):
+
+- `ALERT_LEVEL`: `excepcional`, `muy_buena` o `buena`;
+- `ALERT_DROPS`;
+- `MAX_STOPS`;
+- `MAX_DURATION_H`;
+- `DEP_WINDOWS`;
+- `EXCLUDE_AIRLINES`.
+
 <details><summary>Alternativa por terminal o manual</summary>
 
 - Script: `powershell -ExecutionPolicy Bypass -File scripts\configurar-github-actions.ps1`

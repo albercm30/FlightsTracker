@@ -47,19 +47,86 @@ class DetectDealsTest(unittest.TestCase):
         day = (TODAY + timedelta(days=40)).isoformat()
         quotes[day] = q(day, 420)
         existing = {day: {"price": 520}}
-        res = tracker.detect_deals(quotes, existing, today=TODAY, settings=self.settings)
+        # por defecto las simples bajadas NO avisan (anti-spam)
+        self.assertEqual(tracker.detect_deals(quotes, existing, today=TODAY, settings=self.settings), [])
+        st = dict(self.settings, alert_drops=True)
+        res = tracker.detect_deals(quotes, existing, today=TODAY, settings=st)
         self.assertEqual([a["kind"] for a in res], ["drop"])
         # ya avisado a 425 -> no repetir
-        res = tracker.detect_deals(quotes, existing, today=TODAY, settings=self.settings, last_alerts={day: 425})
+        res = tracker.detect_deals(quotes, existing, today=TODAY, settings=st, last_alerts={day: 425})
         self.assertEqual(res, [])
 
     def test_target_and_record(self):
         quotes = self._year()
         day = (TODAY + timedelta(days=50)).isoformat()
-        quotes[day] = q(day, 450)
-        res = tracker.detect_deals(quotes, {}, today=TODAY, settings=self.settings, max_price=460, history_min=480)
+        quotes[day] = q(day, 380)
+        res = tracker.detect_deals(quotes, {}, today=TODAY, settings=self.settings, max_price=400, history_min=480)
         self.assertEqual(res[0]["kind"], "record")
         self.assertIn("target", res[0]["kinds"])
+        # un mínimo histórico con poco ahorro (−10 %) no merece aviso
+        quotes[day] = q(day, 450)
+        self.assertEqual(tracker.detect_deals(quotes, {}, today=TODAY, settings=self.settings, history_min=480), [])
+
+    def test_alert_levels(self):
+        quotes = self._year()
+        day = (TODAY + timedelta(days=30)).isoformat()
+        quotes[day] = q(day, 370)   # −26 %
+        self.assertEqual(tracker.detect_deals(quotes, {}, today=TODAY, settings=self.settings), [])
+        res = tracker.detect_deals(quotes, {}, today=TODAY, settings=dict(self.settings, alert_level="buena"))
+        self.assertEqual(len(res), 1)
+        quotes[day] = q(day, 320)   # −36 %: muy buena pero no excepcional
+        self.assertEqual(tracker.detect_deals(quotes, {}, today=TODAY,
+                                              settings=dict(self.settings, alert_level="excepcional")), [])
+
+    def test_quote_filter(self):
+        a = Quote("MAD", "BKK", "2027-01-10", 500, transfers=2, duration=1300, dep_time="07:10", airline="EK")
+        b = Quote("MAD", "BKK", "2027-01-10", 600, transfers=1, duration=900, dep_time="22:10", airline="QR")
+        self.assertEqual([x.airline for x in (a, b) if tracker.quote_filter({"max_stops": 1})(x)], ["QR"])
+        self.assertEqual([x.airline for x in (a, b) if tracker.quote_filter({"max_duration_h": 16})(x)], ["QR"])
+        self.assertEqual([x.airline for x in (a, b) if tracker.quote_filter({"dep_windows": "morning"})(x)], ["EK"])
+        self.assertEqual([x.airline for x in (a, b) if tracker.quote_filter({"exclude_airlines": ["ek"]})(x)], ["QR"])
+        self.assertEqual([x.airline for x in (a, b) if tracker.quote_filter({"airlines": ["EK"]})(x)], ["EK"])
+
+
+class AntiSpamTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db.init(os.path.join(self.tmp.name, "a.db"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _cand(self, dest, day, price, sav, trip="ow", o="MAD"):
+        return {"quote": Quote(o, dest, day, price), "kind": "deal", "kinds": ["deal"], "ref_price": price / (1 - sav),
+                "median": price / (1 - sav), "prev_price": None, "savings": sav, "lead": 30,
+                "origin": o, "destination": dest, "trip": trip}
+
+    def test_one_alert_per_destination_and_no_repeats(self):
+        st = db.get_settings()
+        today = date.today()
+        days = [(today + timedelta(days=30 + i)).isoformat() for i in range(30)]
+        cands = [self._cand("LON", d, 40 + i, 0.4) for i, d in enumerate(days)] + [self._cand("BKK", days[0], 400, 0.35)]
+        chosen = tracker.select_alerts(cands, st, today)
+        self.assertEqual(sorted(a["destination"] for a in chosen), ["BKK", "LON"])
+        self.assertEqual(chosen[[a["destination"] for a in chosen].index("LON")]["quote"].price, 40)
+        tracker.record_alerts(chosen, st)
+        # siguiente escaneo: lo mismo o apenas más barato -> nada
+        self.assertEqual(tracker.select_alerts([self._cand("LON", days[3], 38, 0.42)], st, today), [])
+        # claramente mejor (−10 % o más) -> sí
+        self.assertEqual(len(tracker.select_alerts([self._cand("LON", days[3], 34, 0.5)], st, today)), 1)
+        # otro tipo de viaje del mismo destino sin mejorar mucho el ahorro -> no
+        self.assertEqual(tracker.select_alerts([self._cand("LON", days[5], 90, 0.45, trip="rt")], st, today), [])
+
+
+class CatalogTest(unittest.TestCase):
+    def test_all_195_countries(self):
+        from app import catalog
+        from app.catalog_world import COUNTRY_NAMES
+        ccs = {c["country_code"] for c in catalog.countries()}
+        self.assertEqual(len(COUNTRY_NAMES), 195)
+        self.assertTrue(set(COUNTRY_NAMES) <= ccs)
+        self.assertEqual(catalog.cities_in_country("AD")[0]["code"], "BCN")
+        self.assertTrue(all(c["code"] in catalog.COORDS for c in catalog.CITIES))
 
 
 class DemoRealismTest(unittest.TestCase):
@@ -109,6 +176,11 @@ class ParsersTest(unittest.TestCase):
         self.assertEqual(out[0].depart_date, "2026-11-03")
         self.assertEqual(out[0].price, 412.0)
         self.assertTrue(out[0].link.endswith("marker=123"))
+        self.assertEqual(out[0].dep_time, "07:00")
+        rt = prov.parse({"data": [{"price": 500, "departure_at": "2026-11-03T22:10:00+01:00",
+                                   "return_at": "2026-11-13T09:05:00+07:00", "duration_to": 900,
+                                   "duration_back": 960, "transfers": 1, "return_transfers": 1}]}, "MAD", "BKK")[0]
+        self.assertEqual((rt.duration, rt.return_duration, rt.dep_time, rt.ret_time), (900, 960, "22:10", "09:05"))
 
     def test_serpapi_parse(self):
         data = {"best_flights": [{"price": 380, "total_duration": 800, "flights": [
@@ -304,7 +376,7 @@ class CloudTest(unittest.TestCase):
     class FakeGH:
         """Imita la API de GitHub lo justo para probar cloud.py."""
         def __init__(self, private=False, workflow=True):
-            self.vars, self.secrets, self.calls = {}, {}, []
+            self.vars, self.secrets, self.calls, self.updated = {}, {}, [], {}
             self.private, self.workflow, self.pages = private, workflow, None
 
         def request(self, method, url, headers=None, timeout=None, json=None, params=None):
@@ -320,7 +392,8 @@ class CloudTest(unittest.TestCase):
             elif path.endswith("/runs"):
                 body = {"workflow_runs": []}
             elif method == "GET" and path == "/actions/variables":
-                body = {"variables": [{"name": k, "value": v} for k, v in self.vars.items()]}
+                body = {"variables": [{"name": k, "value": v, "updated_at": self.updated.get(k, "2000-01-01T00:00:00Z")}
+                                      for k, v in self.vars.items()]}
             elif method == "GET" and path == "/actions/secrets":
                 body = {"secrets": [{"name": k} for k in self.secrets]}
             elif path == "/actions/secrets/public-key":
@@ -379,6 +452,20 @@ class CloudTest(unittest.TestCase):
         self.assertEqual(st["pages_url"], "https://alber.github.io/Flights/")
         cloud.run_now(demo=True, session=gh)
         self.assertIn(("POST", "/actions/workflows/scan.yml/dispatches"), gh.calls)
+
+    def test_pull_changes_made_from_phone(self):
+        from app import cloud
+        gh = self.FakeGH()
+        cloud.sync(session=gh)
+        # desde el móvil (modo administrador) se añade Nueva York y se cambia el nivel de avisos
+        gh.vars.update(DESTINATIONS="ROM,NYC", ALERT_LEVEL="excepcional")
+        gh.updated.update(DESTINATIONS="2999-01-01T00:00:00Z", ALERT_LEVEL="2999-01-01T00:00:00Z")
+        res = cloud.sync(session=gh)
+        self.assertIn("DESTINATIONS", res["pulled"])
+        enabled = {r["code"] for r in db.rows("SELECT code FROM destinations WHERE enabled=1")}
+        self.assertEqual(enabled, {"ROM", "NYC"})
+        self.assertEqual(db.get_settings()["alert_level"], "excepcional")
+        self.assertEqual(gh.vars["DESTINATIONS"], "NYC,ROM")
 
     def test_private_repo_and_missing_workflow(self):
         from app import cloud

@@ -53,6 +53,69 @@ def fmt_price(p, currency="eur") -> str:
     return f"{round(p):,}".replace(",", ".") + f" {sym}"
 
 
+def fmt_dur(minutes) -> str:
+    if not minutes:
+        return ""
+    h, m = divmod(int(minutes), 60)
+    return f"{h} h {m:02d} min" if h and m else (f"{h} h" if h else f"{m} min")
+
+
+# franjas horarias de salida (como en Skyscanner)
+WINDOWS = {"night": (0, 6), "morning": (6, 12), "afternoon": (12, 18), "evening": (18, 24)}
+WINDOW_LABELS = {"night": "Madrugada", "morning": "Mañana", "afternoon": "Tarde", "evening": "Noche"}
+
+
+def in_windows(hhmm, windows) -> bool:
+    if not windows or not hhmm:
+        return True
+    try:
+        h = int(hhmm[:2])
+    except ValueError:
+        return True
+    return any(WINDOWS[w][0] <= h < WINDOWS[w][1] for w in windows if w in WINDOWS)
+
+
+def _windows(v):
+    if isinstance(v, str):
+        v = [x.strip() for x in v.split(",")]
+    return [x for x in (v or []) if x in WINDOWS]
+
+
+def quote_filter(f: dict):
+    """Filtro de escalas, duración, horarios y aerolíneas. f: max_stops (-1 = cualquiera),
+    max_duration_h (0 = sin límite), dep_windows, ret_windows, airlines, exclude_airlines."""
+    max_stops = int(f.get("max_stops", -1) if f.get("max_stops") not in (None, "") else -1)
+    max_min = float(f.get("max_duration_h") or 0) * 60
+    dep_w, ret_w = _windows(f.get("dep_windows")), _windows(f.get("ret_windows"))
+    inc = {a.upper() for a in (f.get("airlines") or [])}
+    exc = {a.upper() for a in (f.get("exclude_airlines") or [])}
+
+    def ok(q) -> bool:
+        if max_stops >= 0:
+            if (q.transfers or 0) > max_stops or (q.return_date and (q.return_transfers or 0) > max_stops):
+                return False
+        if max_min:
+            if (q.duration and q.duration > max_min) or (q.return_duration and q.return_duration > max_min):
+                return False
+        if dep_w and not in_windows(q.dep_time, dep_w):
+            return False
+        if ret_w and q.return_date and not in_windows(q.ret_time, ret_w):
+            return False
+        al = (q.airline or "").upper()
+        if inc and al not in inc:
+            return False
+        if exc and al in exc:
+            return False
+        return True
+    return ok
+
+
+def scan_filter(settings: dict):
+    return quote_filter({"max_stops": settings.get("max_stops", -1), "max_duration_h": settings.get("max_duration_h", 0),
+                         "dep_windows": settings.get("dep_windows", ""),
+                         "exclude_airlines": settings.get("exclude_airlines") or []})
+
+
 def month_list(today: date, months_ahead: int):
     y, m = today.year, today.month
     out = []
@@ -91,7 +154,7 @@ def nights_range(settings):
 def _fetch_kwargs(settings, trip, min_n=None, max_n=None):
     lo, hi = nights_range(settings)
     return {"currency": settings.get("currency", "eur"), "trip": trip,
-            "direct_only": bool(settings.get("direct_only", False)),
+            "direct_only": bool(settings.get("direct_only", False)) or int(settings.get("max_stops", -1)) == 0,
             "min_nights": min_n if min_n is not None else lo, "max_nights": max_n if max_n is not None else hi}
 
 
@@ -168,28 +231,65 @@ def enrich(r: dict, pax: int = 1, bag: str = "personal", currency: str = "eur") 
     r["origin_name"] = catalog.info(r["origin"])["name"]
     r["links"] = booking_links(r["origin"], r["destination"], r["depart_date"], r.get("return_date"), pax)
     r["long_haul"] = long_haul
+    r["stops"] = max(r.get("transfers") or 0, r.get("return_transfers") or 0) if trip == "rt" else (r.get("transfers") or 0)
+    r["dur_label"] = fmt_dur(r.get("duration"))
+    r["ret_dur_label"] = fmt_dur(r.get("return_duration"))
+    r["dur_total"] = (r.get("duration") or 0) + (r.get("return_duration") or 0) or None
     return r
 
 
 def _q2d(q) -> dict:
     return {"origin": q.origin, "destination": q.destination, "trip": q.trip, "depart_date": q.depart_date,
             "return_date": q.return_date, "price": q.price, "airline": q.airline, "transfers": q.transfers,
-            "return_transfers": q.return_transfers, "link": q.link, "provider": q.provider}
+            "return_transfers": q.return_transfers, "link": q.link, "provider": q.provider,
+            "duration": q.duration, "return_duration": q.return_duration, "dep_time": q.dep_time,
+            "ret_time": q.ret_time}
 
 
 # ---------------------------------------------------------------------------
 # detección de ofertas (lógica pura, testeable)
+# Qué merece un aviso según el nivel elegido:
+#   ahorro mínimo frente al precio habitual, percentil máximo entre las fechas de la ruta,
+#   y ahorro mínimo para avisar de un mínimo histórico.
+ALERT_LEVELS = {
+    "excepcional": {"savings": 0.40, "pct": 0.05, "record": 0.30, "local": 0.25},
+    "muy_buena": {"savings": 0.30, "pct": 0.10, "record": 0.20, "local": 0.18},
+    "buena": {"savings": 0.20, "pct": 0.20, "record": 0.10, "local": 0.10},
+}
+ALERT_LEVEL_LABELS = {"excepcional": "Solo excepcionales", "muy_buena": "Muy buenas", "buena": "Buenas"}
+
+
 def detect_deals(new_quotes: dict, existing: dict, *, today: date, settings: dict,
-                 max_price=None, history_min=None, last_alerts=None):
+                 max_price=None, history_min=None, last_alerts=None, usual=None):
+    """Candidatos a aviso de una ruta. Solo ofertas que de verdad merecen la pena:
+    - deal: X % por debajo del precio habitual Y entre las fechas más baratas de la ruta
+    - record: mínimo histórico de la ruta con un ahorro claro
+    - target: por debajo del precio máximo que pusiste para ese destino
+    - drop: bajada puntual (solo si activas «avisar de bajadas»)
+    `usual` = precio habitual de la ruta según el histórico (si no, la mediana actual)."""
     last_alerts = last_alerts or {}
-    prices = [q.price for d, q in new_quotes.items() if (date.fromisoformat(d) - today).days >= 1]
+    lvl = ALERT_LEVELS.get(settings.get("alert_level") or "muy_buena", ALERT_LEVELS["muy_buena"])
+    prices = sorted(q.price for d, q in new_quotes.items() if (date.fromisoformat(d) - today).days >= 1)
     median = statistics.median(prices) if len(prices) >= 5 else None
+    ref_usual = usual or median
     min_lead = int(settings.get("min_days_ahead", 14))
     max_lead = int(settings.get("max_days_ahead", 365))
     drop_pct = float(settings.get("drop_pct", 15)) / 100
-    deal_pct = float(settings.get("deal_pct", 30)) / 100
-    realert = float(settings.get("realert_pct", 5)) / 100
-    cheapest_now = min(prices) if prices else None
+    drops_on = str(settings.get("alert_drops", False)).lower() in ("1", "true", "yes", "on")
+    realert = float(settings.get("realert_pct", 10)) / 100
+    cheapest_now = prices[0] if prices else None
+
+    def pct_rank(price):
+        return sum(1 for p in prices if p < price) / len(prices) if prices else 1
+
+    # precio típico de las fechas cercanas (±3 semanas): que sea barato para ESA época,
+    # no solo por ser temporada baja
+    dated = sorted((date.fromisoformat(d), q.price) for d, q in new_quotes.items())
+
+    def local_saving(d, price):
+        dd = date.fromisoformat(d)
+        near = [p for x, p in dated if abs((x - dd).days) <= 21 and x != dd]
+        return 1 - price / statistics.median(near) if len(near) >= 6 else 0.0
 
     found = []
     for d, q in new_quotes.items():
@@ -198,16 +298,20 @@ def detect_deals(new_quotes: dict, existing: dict, *, today: date, settings: dic
             continue
         kinds, ref = [], None
         prev = (existing.get(d) or {}).get("price")
-        if history_min is not None and q.price < history_min and q.price == cheapest_now:
+        savings = (1 - q.price / ref_usual) if ref_usual else 0
+        rank = pct_rank(q.price)
+        if history_min is not None and q.price < history_min and q.price == cheapest_now \
+                and savings >= lvl["record"]:
             kinds.append("record")
             ref = history_min
-        if median and len(prices) >= 10 and q.price <= median * (1 - deal_pct):
+        if ref_usual and len(prices) >= 10 and savings >= lvl["savings"] and rank <= lvl["pct"] \
+                and local_saving(d, q.price) >= lvl["local"]:
             kinds.append("deal")
-            ref = ref or median
+            ref = ref or ref_usual
         if max_price and q.price <= float(max_price):
             kinds.append("target")
             ref = ref or float(max_price)
-        if prev and q.price <= prev * (1 - drop_pct):
+        if drops_on and prev and q.price <= prev * (1 - drop_pct):
             kinds.append("drop")
             ref = ref or prev
         if not kinds:
@@ -216,11 +320,17 @@ def detect_deals(new_quotes: dict, existing: dict, *, today: date, settings: dic
         if last is not None and q.price > last * (1 - realert):
             continue
         kind = max(kinds, key=KIND_PRIORITY.get)
-        savings = (1 - q.price / median) if median else 0
-        found.append({"quote": q, "kind": kind, "kinds": kinds, "ref_price": ref, "median": median,
-                      "prev_price": prev, "savings": savings, "lead": lead})
-    found.sort(key=lambda a: (-KIND_PRIORITY[a["kind"]], a["quote"].price))
+        found.append({"quote": q, "kind": kind, "kinds": kinds, "ref_price": ref, "median": ref_usual,
+                      "prev_price": prev, "savings": savings, "lead": lead, "rank": rank})
+    found.sort(key=lambda a: (-KIND_PRIORITY[a["kind"]], -a["savings"], a["quote"].price))
     return found
+
+
+def best_alert(cands):
+    """De varios candidatos (de un mismo destino) se queda con el que más merece la pena."""
+    if not cands:
+        return None
+    return max(cands, key=lambda a: (a["savings"] + 0.05 * KIND_PRIORITY[a["kind"]], -a["quote"].price))
 
 
 def build_message(alert, currency="eur", pax=1, bag="personal") -> str:
@@ -242,6 +352,8 @@ def build_message(alert, currency="eur", pax=1, bag="personal") -> str:
         msg += " (" + ", ".join(extra) + ")"
     if q.transfers is not None:
         msg += " · directo" if q.transfers == 0 else f" · {q.transfers} escala(s)"
+    if q.duration:
+        msg += f" · {fmt_dur(q.duration)}"
     if q.airline:
         msg += f" · {airlines.name(q.airline)}"
     if bag != "personal" or pax > 1:
@@ -254,30 +366,29 @@ def build_message(alert, currency="eur", pax=1, bag="personal") -> str:
 # guardado por ruta
 def _save_route(origin, destination, trip, best: dict, today: date, settings: dict, max_price,
                 alerts: bool = True, now: str = None):
+    """Guarda los precios de una ruta y devuelve los CANDIDATOS a aviso (sin guardarlos:
+    run_scan elige el mejor por destino y aplica el anti-spam)."""
     now = now or db.now_iso()
     existing = {r["depart_date"]: r for r in db.rows(
         "SELECT * FROM quotes WHERE origin=? AND destination=? AND trip=?", (origin, destination, trip))}
-    hist = db.one("SELECT MIN(min_price) AS m, COUNT(*) AS n FROM route_stats WHERE origin=? AND destination=? "
-                  "AND trip=?", (origin, destination, trip))
-    history_min = hist["m"] if hist and hist["n"] >= 2 else None
-    last_alerts = {r["depart_date"]: r["p"] for r in db.rows(
-        "SELECT depart_date, MIN(price) AS p FROM alerts WHERE origin=? AND destination=? AND trip=? "
-        "AND depart_date>=? GROUP BY depart_date", (origin, destination, trip, today.isoformat()))}
-
     found = []
     if alerts:
+        hist = db.one("SELECT MIN(min_price) AS m, COUNT(*) AS n FROM route_stats WHERE origin=? AND destination=? "
+                      "AND trip=?", (origin, destination, trip))
+        history_min = hist["m"] if hist and hist["n"] >= 2 else None
+        since = (datetime.now(timezone.utc) - timedelta(days=60)).replace(microsecond=0).isoformat()
+        meds = [r["median_price"] for r in db.rows(
+            "SELECT median_price FROM route_stats WHERE origin=? AND destination=? AND trip=? AND scanned_at>=? "
+            "AND median_price IS NOT NULL", (origin, destination, trip, since))]
+        usual = statistics.median(meds) if len(meds) >= 3 else None
+        last_alerts = {r["depart_date"]: r["p"] for r in db.rows(
+            "SELECT depart_date, MIN(price) AS p FROM alerts WHERE origin=? AND destination=? AND trip=? "
+            "AND depart_date>=? GROUP BY depart_date", (origin, destination, trip, today.isoformat()))}
         found = detect_deals(best, existing, today=today, settings=settings, max_price=max_price,
-                             history_min=history_min, last_alerts=last_alerts)
-        week_ago = (datetime.now(timezone.utc) - timedelta(days=7)).replace(microsecond=0).isoformat()
-        recent = db.one("SELECT MIN(price) AS p FROM alerts WHERE origin=? AND destination=? AND trip=? "
-                        "AND created_at>=? AND depart_date>=? AND kind NOT LIKE 'watch%'",
-                        (origin, destination, trip, week_ago, today.isoformat()))
-        if recent and recent["p"] is not None:
-            limit_price = recent["p"] * (1 - float(settings.get("realert_pct", 5)) / 100)
-            found = [a for a in found if a["quote"].price <= limit_price]
-        found = found[: int(settings.get("max_alerts_per_route", 3))]
+                             history_min=history_min, last_alerts=last_alerts, usual=usual)
+        for a in found:
+            a.update(origin=origin, destination=destination, trip=trip)
 
-    new_alerts = []
     with db.connect() as c:
         for d, q in best.items():
             old = existing.get(d)
@@ -285,40 +396,83 @@ def _save_route(origin, destination, trip, best: dict, today: date, settings: di
                 c.execute("INSERT INTO quote_history(origin, destination, trip, depart_date, price, prev_price, seen_at)"
                           " VALUES (?,?,?,?,?,?,?)",
                           (origin, destination, trip, d, q.price, old["price"] if old else None, now))
+            vals = (q.return_date, q.nights, q.airline, q.transfers, q.return_transfers, q.duration,
+                    q.return_duration, q.dep_time, q.ret_time, q.link, q.provider)
             if old:
                 prev = old["price"] if old["price"] != q.price else old["prev_price"]
                 lowest = min(old["lowest_price"] or q.price, q.price)
                 c.execute("UPDATE quotes SET price=?, prev_price=?, lowest_price=?, return_date=?, nights=?, airline=?,"
-                          " transfers=?, return_transfers=?, link=?, provider=?, updated_at=? "
-                          "WHERE origin=? AND destination=? AND trip=? AND depart_date=?",
-                          (q.price, prev, lowest, q.return_date, q.nights, q.airline, q.transfers, q.return_transfers,
-                           q.link, q.provider, now, origin, destination, trip, d))
+                          " transfers=?, return_transfers=?, duration=?, return_duration=?, dep_time=?, ret_time=?,"
+                          " link=?, provider=?, updated_at=? WHERE origin=? AND destination=? AND trip=? AND depart_date=?",
+                          (q.price, prev, lowest, *vals, now, origin, destination, trip, d))
             else:
-                c.execute("INSERT INTO quotes(origin, destination, trip, depart_date, return_date, nights, price, "
-                          "prev_price, lowest_price, airline, transfers, return_transfers, link, provider, first_seen, "
-                          "updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                          (origin, destination, trip, d, q.return_date, q.nights, q.price, None, q.price, q.airline,
-                           q.transfers, q.return_transfers, q.link, q.provider, now, now))
+                c.execute("INSERT INTO quotes(origin, destination, trip, depart_date, price, prev_price, lowest_price, "
+                          "return_date, nights, airline, transfers, return_transfers, duration, return_duration, "
+                          "dep_time, ret_time, link, provider, first_seen, updated_at) "
+                          "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                          (origin, destination, trip, d, q.price, None, q.price, *vals, now, now))
         prices = [q.price for q in best.values()]
         if prices:
             c.execute("INSERT INTO route_stats(origin, destination, trip, scanned_at, min_price, median_price, count) "
                       "VALUES (?,?,?,?,?,?,?)",
                       (origin, destination, trip, now, min(prices), statistics.median(prices), len(prices)))
-        currency = settings.get("currency", "eur")
-        pax, bag = int(settings.get("passengers", 1)), settings.get("baggage", "personal")
-        for a in found:
+    return found
+
+
+def select_alerts(cands, settings: dict, today: date):
+    """Anti-spam: como mucho UN aviso por destino y escaneo (el mejor de todos sus orígenes,
+    fechas y tipos de viaje). Si ese destino ya se avisó hace poco (realert_days), solo se repite
+    si la nueva oferta es claramente mejor: un X % más barata (mismo tipo de viaje) y con al menos
+    el mismo ahorro, o 10 puntos más de ahorro si es otro tipo de viaje."""
+    realert = float(settings.get("realert_pct", 10)) / 100
+    days = int(settings.get("realert_days", 14))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).replace(microsecond=0).isoformat()
+    by_dest = {}
+    for a in cands:
+        by_dest.setdefault(a["destination"], []).append(a)
+    chosen = []
+    for dest, lst in by_dest.items():
+        prev = db.rows("SELECT trip, price, ref_price, kind FROM alerts WHERE destination=? AND created_at>=? "
+                       "AND depart_date>=? AND kind NOT LIKE 'watch%'", (dest, since, today.isoformat()))
+        prev_price = {}
+        for r in prev:
+            prev_price[r["trip"]] = min(prev_price.get(r["trip"], r["price"]), r["price"])
+        prev_sav = max([1 - r["price"] / r["ref_price"] for r in prev if r["ref_price"] and r["kind"] == "deal"]
+                       or [0])
+
+        def worth(a):
+            if not prev:
+                return True
+            if a["trip"] in prev_price:
+                return a["quote"].price <= prev_price[a["trip"]] * (1 - realert) and a["savings"] >= prev_sav - 0.02
+            return a["savings"] >= prev_sav + 0.10
+        pick = best_alert([a for a in lst if worth(a)])
+        if pick:
+            pick["others"] = len(lst) - 1
+            chosen.append(pick)
+    chosen.sort(key=lambda a: (-KIND_PRIORITY[a["kind"]], -a["savings"]))
+    return chosen
+
+
+def record_alerts(chosen, settings: dict, now: str = None):
+    now = now or db.now_iso()
+    currency = settings.get("currency", "eur")
+    pax, bag = int(settings.get("passengers", 1)), settings.get("baggage", "personal")
+    out = []
+    with db.connect() as c:
+        for a in chosen:
             q = a["quote"]
             msg = build_message(a, currency, pax, bag)
             cur = c.execute(
                 "INSERT INTO alerts(created_at, kind, origin, destination, trip, depart_date, return_date, price, "
                 "ref_price, message, link, airline) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
-                (now, a["kind"], origin, destination, trip, q.depart_date, q.return_date, q.price, a["ref_price"],
-                 msg, q.link, q.airline))
-            new_alerts.append({"id": cur.lastrowid, "kind": a["kind"], "message": msg, "link": q.link,
-                               "price": q.price, "savings": a["savings"], "origin": origin, "trip": trip,
-                               "destination": destination, "depart_date": q.depart_date,
-                               "return_date": q.return_date})
-    return new_alerts
+                (now, a["kind"], a["origin"], a["destination"], a["trip"], q.depart_date, q.return_date, q.price,
+                 a["ref_price"], msg, q.link, q.airline))
+            out.append({"id": cur.lastrowid, "kind": a["kind"], "message": msg, "link": q.link,
+                        "price": q.price, "savings": a["savings"], "origin": a["origin"], "trip": a["trip"],
+                        "destination": a["destination"], "depart_date": q.depart_date,
+                        "return_date": q.return_date})
+    return out
 
 
 def cleanup(today: date):
@@ -332,6 +486,7 @@ def cleanup(today: date):
 
 def _fetch_route(provider, origin, dest, months, settings, errors, delay=0.0, trip="ow", use_cache=False):
     quotes = []
+    keep = scan_filter(settings)
     kw = _fetch_kwargs(settings, trip)
     for month in months:
         try:
@@ -339,7 +494,7 @@ def _fetch_route(provider, origin, dest, months, settings, errors, delay=0.0, tr
                 data, hit = cached_fetch(provider, origin, dest, month, float(settings.get("search_cache_hours", 3)), **kw)
             else:
                 data, hit = provider.fetch_month(origin, dest, month, **kw), False
-            quotes += data
+            quotes += [q for q in data if keep(q)]
         except Exception as e:  # noqa: BLE001 - seguimos con el resto
             hit = True
             log.warning("Error %s→%s %s %s: %s", origin, dest, trip, month, e)
@@ -454,7 +609,7 @@ def run_scan(provider=None, today: date = None, notify: bool = True) -> dict:
         routes = [(o, d["code"], t, d.get("max_price")) for t in db.trips(settings)
                   for o in origins for d in dests if o != d["code"]]
         progress.update(running=True, done=0, total=len(routes), current="")
-        all_alerts, n_quotes, errors = [], 0, []
+        cands, n_quotes, errors = [], 0, []
         for origin, dest, trip, max_price in routes:
             progress["current"] = f"{origin} → {dest} ({TRIP_LABELS[trip]})"
             if provider.name == "demo":
@@ -462,8 +617,9 @@ def run_scan(provider=None, today: date = None, notify: bool = True) -> dict:
             best = _fetch_route(provider, origin, dest, months, settings, errors, delay, trip)
             n_quotes += len(best)
             if best:
-                all_alerts += _save_route(origin, dest, trip, best, today, settings, max_price)
+                cands += _save_route(origin, dest, trip, best, today, settings, max_price)
             progress["done"] += 1
+        all_alerts = record_alerts(select_alerts(cands, settings, today), settings)
         progress["current"] = "vuelos vigilados"
         all_alerts += check_watches(provider, today, settings)
         cleanup(today)
@@ -646,7 +802,21 @@ def _norm_params(p: dict, settings: dict, today: date) -> dict:
         "baggage": p.get("baggage") or settings.get("baggage", "personal"),
         "mode": p.get("mode") or "days",
         "currency": settings.get("currency", "eur"),
+        # filtros tipo Skyscanner (por defecto, los de Ajustes)
+        "max_stops": int(p["max_stops"]) if p.get("max_stops") not in (None, "") else int(settings.get("max_stops", -1)),
+        "max_duration_h": float(p["max_duration_h"]) if p.get("max_duration_h") not in (None, "")
+        else float(settings.get("max_duration_h") or 0),
+        "dep_windows": _windows(p["dep_windows"]) if "dep_windows" in p else _windows(settings.get("dep_windows", "")),
+        "ret_windows": _windows(p.get("ret_windows")),
+        "airlines": [a.upper() for a in (p.get("airlines") or [])],
+        "exclude_airlines": [a.upper() for a in (p["exclude_airlines"] if "exclude_airlines" in p
+                                                 else settings.get("exclude_airlines") or [])],
+        "sort": p.get("sort") if p.get("sort") in ("price", "duration", "best") else "price",
     }
+    if q["direct_only"]:
+        q["max_stops"] = 0
+    elif q["max_stops"] == 0:
+        q["direct_only"] = True
     if q["max_nights"] < q["min_nights"]:
         q["max_nights"] = q["min_nights"]
     if q["date_from"] < (today + timedelta(days=1)).isoformat():
@@ -718,7 +888,10 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
                 return False
         return True
 
-    raw = [q for q in options if ok(q)]
+    dated = [q for q in options if ok(q)]
+    facets = _facets(dated)
+    keep = quote_filter(p)
+    raw = [q for q in dated if keep(q)]
     # Matriz flexible (ida y vuelta): mejor precio por día de salida x noches (antes de reducir)
     matrix = None
     if p["trip"] == "rt" and p["mode"] == "days":
@@ -746,8 +919,11 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
     if p["max_price"]:
         opts = [o for o in opts if o["price_pp_bags"] <= p["max_price"]]
     if not opts:
-        return {"found": False, "errors": errors[:10], "routes": len(routes), "params": p, "provider": provider.name}
+        return {"found": False, "errors": errors[:10], "routes": len(routes), "params": p, "provider": provider.name,
+                "facets": facets, "filtered_out": len(dated)}
     key = "price_total"
+    for o in opts:
+        o["best_score"] = best_score(o)
     opts.sort(key=lambda r: (r[key], r["depart_date"]))
     all_prices = [o["price"] for o in opts]
     for o in opts:
@@ -757,7 +933,12 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
     s_lo, s_hi = nights_range(settings)
     if p["mode"] == "days" and not p["weekdays"] and not p["return_weekdays"] and not p["return_from"] \
             and (p["trip"] == "ow" or (p["min_nights"], p["max_nights"]) == (s_lo, s_hi)) \
-            and p["direct_only"] == bool(settings.get("direct_only")):
+            and p["direct_only"] == bool(settings.get("direct_only")) \
+            and not p["airlines"] and not p["ret_windows"] \
+            and p["max_stops"] == int(settings.get("max_stops", -1)) \
+            and p["max_duration_h"] == float(settings.get("max_duration_h") or 0) \
+            and p["dep_windows"] == _windows(settings.get("dep_windows", "")) \
+            and p["exclude_airlines"] == [a.upper() for a in settings.get("exclude_airlines") or []]:
         by_route = {}
         for q in raw:
             by_route.setdefault((q.origin, q.destination), []).append(q)
@@ -791,17 +972,25 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
     for r in dest_list:
         c = catalog.COORDS.get(r["destination"])
         r["lat"], r["lon"] = (c if c else (None, None))
-    seen, top = set(), []
-    for o in opts:
-        k = (o["depart_date"], o.get("return_date"), o["destination"])
-        if k in seen:
-            continue
-        seen.add(k)
-        top.append(o)
-        if len(top) >= 20:
-            break
-    best = opts[0]
-    for r in top + list(by_month.values()) + [best]:
+    orders = {"price": lambda r: (r[key], r["depart_date"]),
+              "duration": lambda r: (r.get("dur_total") or 99999, r[key]),
+              "best": lambda r: (r["best_score"], r[key])}
+
+    def top_by(order):
+        seen, out = set(), []
+        for o in sorted(opts, key=order):
+            k = (o["depart_date"], o.get("return_date"), o["destination"])
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(o)
+            if len(out) >= 20:
+                break
+        return out
+    tops = {k: top_by(f) for k, f in orders.items()}
+    top = tops[p["sort"]]
+    best = top[0] if top else opts[0]
+    for r in tops["price"] + tops["duration"] + tops["best"] + list(by_month.values()) + [best]:
         r["savings"] = 1 - r["price"] / median if median else 0
     hist = db.rows("SELECT price, seen_at FROM quote_history WHERE origin=? AND destination=? AND trip=? AND "
                    "depart_date=? ORDER BY seen_at", (best["origin"], best["destination"], p["trip"], best["depart_date"]))
@@ -811,10 +1000,12 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
         "params": p,
         "best": best,
         "top": top,
+        "tops": {k: v[:10] for k, v in tops.items()},
         "by_month": [by_month[k] for k in sorted(by_month)],
         "by_destination": dest_list[:150],
         "days": [{"date": r["depart_date"], "price": r["price"], "total": r[key], "origin": r["origin"],
-                  "destination": r["destination"], "return_date": r.get("return_date"), "nights": r.get("nights")}
+                  "destination": r["destination"], "return_date": r.get("return_date"), "nights": r.get("nights"),
+                  "stops": r.get("stops"), "dur": r.get("dur_total")}
                  for r in days],
         "matrix": matrix,
         "median": median,
@@ -825,7 +1016,39 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
         "options": len(opts),
         "errors": errors[:10],
         "provider": provider.name,
+        "facets": facets,
+        "summary": {k: ({"price": v[0]["price_total"], "dur": v[0].get("dur_total"), "pax": p["pax"]} if v else None)
+                    for k, v in tops.items()},
     }
+
+
+def best_score(r) -> float:
+    """«Mejor» (como Skyscanner): precio por persona + 12 €/hora de viaje + 20 € por escala."""
+    hours = (r.get("dur_total") or 0) / 60
+    stops = (r.get("transfers") or 0) + (r.get("return_transfers") or 0)
+    return round(r["price_total"] / max(1, r.get("pax") or 1) + 12 * hours + 20 * stops, 1)
+
+
+def _facets(quotes) -> dict:
+    """Resumen para los filtros: precio mínimo por nº de escalas, por aerolínea, por franja y duraciones."""
+    stops, al, win, durs = {}, {}, {}, []
+    for q in quotes:
+        n = max(q.transfers or 0, q.return_transfers or 0) if q.return_date else (q.transfers or 0)
+        k = str(min(n, 2))
+        stops[k] = min(stops.get(k, q.price), q.price)
+        if q.airline:
+            al[q.airline] = min(al.get(q.airline, q.price), q.price)
+        if q.dep_time:
+            for w in WINDOWS:
+                if in_windows(q.dep_time, [w]):
+                    win[w] = min(win.get(w, q.price), q.price)
+        if q.duration:
+            durs.append(max(q.duration, q.return_duration or 0))
+    return {"stops": stops,
+            "airlines": sorted(({"code": k, "name": airlines.name(k), "min": v} for k, v in al.items()),
+                               key=lambda x: x["min"])[:30],
+            "windows": win,
+            "duration": [min(durs), max(durs)] if durs else None}
 
 
 def grid(origin: str, dest: str, depart: str, ret: str = None, span: int = 3, provider=None) -> dict:

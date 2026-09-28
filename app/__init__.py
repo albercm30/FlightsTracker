@@ -15,7 +15,7 @@ from flask import Flask, Response, jsonify, redirect, request, send_from_directo
 from . import airlines, catalog, cloud, db, holidays, notifier, scheduler, tracker
 from .providers import booking_links, get_provider, serpapi
 
-__version__ = "2.0.0"
+__version__ = "4.0.0"
 
 
 def load_dotenv(path: str = ".env"):
@@ -179,6 +179,8 @@ def create_app(db_path: str = None, start_scheduler: bool = None) -> Flask:
                        for k, v in catalog.THEMES.items()},
             "spain_origins": [catalog.info(c) for c in catalog.SPAIN_ORIGINS],
             "airlines": {k: v["name"] for k, v in airlines.AIRLINES.items()},
+            "alert_levels": tracker.ALERT_LEVEL_LABELS,
+            "windows": tracker.WINDOW_LABELS,
         })
 
     # ---------------- catálogo ----------------

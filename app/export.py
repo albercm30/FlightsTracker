@@ -15,7 +15,8 @@ from . import airlines, catalog, db, holidays
 from . import create_app
 
 PUBLIC_SETTINGS = ["origins", "currency", "trip_type", "min_nights", "max_nights", "passengers", "baggage",
-                   "direct_only", "months_ahead", "holiday_region", "timezone", "min_days_ahead", "max_days_ahead"]
+                   "direct_only", "months_ahead", "holiday_region", "timezone", "min_days_ahead", "max_days_ahead",
+                   "alert_level", "alert_drops", "max_stops", "max_duration_h", "dep_windows", "exclude_airlines"]
 
 
 def _write(path, data):
@@ -77,6 +78,10 @@ def _export(out_dir, get, s, site_title):
     meta["resident_airports"] = {k: sorted(v) for k, v in RESIDENT_AIRPORTS.items()}
     meta["tax_per_leg"] = TAX_PER_LEG
     meta["vapid_public"] = s.get("vapid_public") or ""
+    from .cloud import detect_repo
+    # repositorio (público) para el modo administrador del móvil; el token NUNCA se publica
+    meta["repo"] = os.environ.get("GITHUB_REPOSITORY") or (s.get("github_repo") or "").strip() or detect_repo()
+
     _write(d("meta.json"), meta)
 
     cat = get("/api/catalog?limit=1000")
@@ -109,7 +114,8 @@ def _export(out_dir, get, s, site_title):
                 if not cal["quotes"]:
                     continue
                 keep = ("depart_date", "return_date", "nights", "price", "prev_price", "lowest_price", "airline",
-                        "transfers", "return_transfers", "link", "updated_at", "level")
+                        "transfers", "return_transfers", "duration", "return_duration", "dep_time", "ret_time",
+                        "link", "updated_at", "level")
                 cal["quotes"] = [{k: q.get(k) for k in keep if q.get(k) is not None} for q in cal["quotes"]]
                 cal["slim"] = True
                 _write(d("cal", f"{o}-{dest['code']}-{t}.json"), cal)

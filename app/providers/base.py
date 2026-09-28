@@ -16,6 +16,10 @@ class Quote:
     return_transfers: Optional[int] = None
     link: str = ""
     provider: str = ""
+    duration: Optional[int] = None         # minutos de la ida (puerta a puerta, con escalas)
+    return_duration: Optional[int] = None  # minutos de la vuelta
+    dep_time: Optional[str] = None         # "HH:MM" hora local de salida
+    ret_time: Optional[str] = None         # "HH:MM" hora de salida de la vuelta
     extra: dict = field(default_factory=dict)
 
     @property

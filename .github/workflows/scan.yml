@@ -96,6 +96,12 @@ jobs:
           DIRECT_ONLY: ${{ vars.DIRECT_ONLY }}
           DEAL_PCT: ${{ vars.DEAL_PCT }}
           MIN_DAYS_AHEAD: ${{ vars.MIN_DAYS_AHEAD }}
+          ALERT_LEVEL: ${{ vars.ALERT_LEVEL }}
+          ALERT_DROPS: ${{ vars.ALERT_DROPS }}
+          MAX_STOPS: ${{ vars.MAX_STOPS }}
+          MAX_DURATION_H: ${{ vars.MAX_DURATION_H }}
+          DEP_WINDOWS: ${{ vars.DEP_WINDOWS }}
+          EXCLUDE_AIRLINES: ${{ vars.EXCLUDE_AIRLINES }}
           TZ: ${{ vars.TZ || 'Europe/Madrid' }}
         run: python -m app scan
 

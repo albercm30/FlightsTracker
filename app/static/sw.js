@@ -1,7 +1,7 @@
 /* Service worker: la interfaz funciona como app instalable y abre aunque la red falle.
    Las llamadas /api/ van siempre a la red (datos frescos). */
-const CACHE = 'ft-v3';
-const SHELL = ['/', '/static/styles.css', '/static/js/core.js', '/static/js/static-mode.js', '/static/js/detail.js', '/static/js/views.js',
+const CACHE = 'ft-v4';
+const SHELL = ['/', '/static/styles.css', '/static/js/core.js', '/static/js/static-mode.js', '/static/js/detail.js', '/static/js/views.js', '/static/js/admin.js',
   '/static/icons/icon-192.png', '/manifest.webmanifest'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', (e) => {

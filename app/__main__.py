@@ -55,10 +55,23 @@ def main():
             with open(summary, "a", encoding="utf-8") as f:
                 f.write(_summary_markdown(res) + "\n")
         sys.exit(1 if res.get("status") == "error" else 0)
+    if len(sys.argv) > 1 and sys.argv[1] == "test-notify":
+        from . import db, notifier
+        create_app(start_scheduler=False)
+        db.apply_env_config()
+        res = notifier.send_test(db.get_settings())
+        print(json.dumps(res, ensure_ascii=False, indent=2))
+        summary = os.environ.get("GITHUB_STEP_SUMMARY")
+        if summary:
+            with open(summary, "a", encoding="utf-8") as f:
+                f.write("## 🔔 Aviso de prueba\n\n" + "\n".join(f"- **{k}:** {v}" for k, v in res.items()) + "\n")
+        sys.exit(0 if any(str(v).startswith("ok") for v in res.values()) else 1)
     if len(sys.argv) > 1 and sys.argv[1] == "export":
         from .export import export_site
         out = sys.argv[2] if len(sys.argv) > 2 else "site"
-        print(json.dumps(export_site(out, os.environ.get("SITE_TITLE") or None), ensure_ascii=False))
+        print(json.dumps(export_site(out, os.environ.get("SITE_TITLE") or None,
+                                     password=os.environ.get("SITE_PASSWORD") or None,
+                                     admin_token=os.environ.get("SITE_ADMIN_TOKEN") or None), ensure_ascii=False))
         return
     app = create_app()
     host = os.environ.get("HOST", "0.0.0.0")

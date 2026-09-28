@@ -162,6 +162,7 @@ DEFAULT_SETTINGS = {
     "site_url": "",                # dirección de la web pública (para abrirla al tocar un aviso)
     "github_token": "",
     "github_repo": "",
+    "site_password": "",           # contraseña de tu web privada (vacío = web pública)
     "cloud_synced_at": "",         # última sincronización con GitHub (para traer cambios hechos desde el móvil)
     "publish_site": True,
     "site_title": "Chollos de vuelos",
@@ -218,7 +219,7 @@ ENV_MAP = {
 }
 
 SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password", "github_token",
-               "vapid_private", "push_subscriptions"}
+               "vapid_private", "push_subscriptions", "site_password"}
 CHOICES = {
     "trip_type": {"ow", "rt", "both"},
     "baggage": {"personal", "cabin", "checked", "cabin_checked"},
@@ -363,6 +364,13 @@ def apply_env_config():
     vals = {k: os.environ[e] for k, e in ENV_MAP.items() if os.environ.get(e)}
     if os.environ.get("ORIGINS"):
         vals["origins"] = os.environ["ORIGINS"]
+    from .sitecrypt import email_from_env
+    em = email_from_env()  # email configurado desde la web privada (cifrado)
+    if em and em.get("email_to"):
+        to = em["email_to"].strip()
+        vals.update(email_to=to, smtp_password=(em.get("smtp_password") or "").replace(" ", ""),
+                    smtp_host=em.get("smtp_host") or "smtp.gmail.com", smtp_port=em.get("smtp_port") or 587,
+                    smtp_user=em.get("smtp_user") or to, smtp_from=em.get("smtp_from") or to)
     if vals:
         update_settings(vals)
     codes = [c.strip().upper() for c in os.environ.get("DESTINATIONS", "").split(",") if c.strip()]

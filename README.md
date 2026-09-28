@@ -127,6 +127,22 @@ Cada vuelo muestra la **duración** de la ida y de la vuelta, las **escalas** y 
   - filtros rápidos con el precio «desde» de cada opción: escalas, franja y aerolíneas.
 - **En Ajustes → Filtros de los escaneos:** lo que se vigila y avisa automáticamente. Por ejemplo, «nunca más de 1 escala ni más de 16 h» o «sin Ryanair».
 
+## 🔒 Tu web privada, siempre online (recomendado)
+
+En la app del ordenador ve a **Ajustes → ☁️ → paso 9** y pon una contraseña. Solo se hace una vez. A partir de ahí:
+
+- Tu web de GitHub Pages está **online 24/7, gratis y sin tu PC encendido**.
+- Te pide la contraseña **una sola vez por dispositivo** (móvil, portátil…) y la recuerda.
+- Todos los datos se publican **cifrados** (AES-256, clave derivada de tu contraseña). Sin ella nadie ve tus destinos ni tus precios.
+- Desde la web gestionas:
+  - tus **destinos**;
+  - el **nivel de avisos y los filtros**;
+  - tu **email** para recibir los chollos, con un botón para enviar un email de prueba.
+
+  Tu cuenta de GitHub viaja cifrada con tu contraseña, así que no tienes que configurar nada en cada móvil.
+
+Usa una contraseña larga (10+ caracteres): protege también el acceso a tu repositorio.
+
 ## 🔑 Gestionar la web pública desde el móvil
 
 1. Abre la web pública con `#avisos` al final una vez (así sabe que ese móvil es tuyo).

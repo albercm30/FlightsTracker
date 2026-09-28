@@ -116,6 +116,9 @@ class GitHub:
                   json={"encrypted_value": encrypt(key["key"], value), "key_id": key["key_id"]})
         return True
 
+    def delete_secret(self, name):
+        self._req("DELETE", f"/actions/secrets/{name}", ok=(204, 404))
+
     def pages(self):
         r = self._req("GET", "/pages", ok=(200, 404))
         return r.json() if r.status_code == 200 else None
@@ -195,6 +198,7 @@ SECRET_MAP = {
     "SMTP_FROM": "smtp_from",
     "VAPID_PRIVATE_KEY": "vapid_private",
     "PUSH_SUBSCRIPTIONS": "push_subscriptions",
+    "SITE_PASSWORD": "site_password",
 }
 
 
@@ -310,6 +314,12 @@ def sync(enable_schedule: bool = True, session=None) -> dict:
     gh.set_variable("ENABLE_SCHEDULED_SCAN", "true" if enable_schedule else "false")
     done_secrets = [name for name, key in SECRET_MAP.items()
                     if s.get(key) not in (None, "", "[]") and gh.set_secret(name, s.get(key))]
+    # Web privada: el token para gestionar la web desde el móvil viaja cifrado con tu contraseña
+    if s.get("site_password") and s.get("github_token") and gh.set_secret("SITE_ADMIN_TOKEN", s["github_token"]):
+        done_secrets.append("SITE_ADMIN_TOKEN")
+    elif not s.get("site_password"):
+        for name in ("SITE_PASSWORD", "SITE_ADMIN_TOKEN"):
+            gh.delete_secret(name)
     pages_msg = None
     if s.get("publish_site"):
         try:

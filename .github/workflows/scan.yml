@@ -17,6 +17,10 @@ on:
         description: "Probar con precios SIMULADOS (sirve para comprobar que te llegan los avisos)"
         type: boolean
         default: false
+      test:
+        description: "Solo enviar un aviso de prueba (email / notificación), sin escanear"
+        type: boolean
+        default: false
 
 concurrency:
   group: scan
@@ -43,14 +47,14 @@ jobs:
       - name: Comprobar configuración
         env:
           HAS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN != '' }}
-          HAS_NOTIFY: ${{ secrets.PUSH_SUBSCRIPTIONS != '' || secrets.EMAIL_TO != '' || secrets.NTFY_TOPIC != '' || secrets.TELEGRAM_BOT_TOKEN != '' }}
+          HAS_NOTIFY: ${{ secrets.PUSH_SUBSCRIPTIONS != '' || secrets.EMAIL_TO != '' || vars.EMAIL_CONFIG_ENC != '' || secrets.NTFY_TOPIC != '' || secrets.TELEGRAM_BOT_TOKEN != '' }}
           ORIGINS: ${{ vars.ORIGINS }}
           DESTINATIONS: ${{ vars.DESTINATIONS }}
         run: |
           ok=1
           if [ -z "$ORIGINS" ]; then echo "::error::Falta la variable ORIGINS (p. ej. TCI,LPA,MAD)"; ok=0; fi
           if [ -z "$DESTINATIONS" ]; then echo "::error::Falta la variable DESTINATIONS (p. ej. LON,ROM,NYC)"; ok=0; fi
-          if [ "$PRICE_PROVIDER" = "travelpayouts" ] && [ "$HAS_TOKEN" != "true" ]; then echo "::error::Falta el secret TRAVELPAYOUTS_TOKEN (gratis en travelpayouts.com). Para probar sin él, lanza el workflow con 'demo' activado."; ok=0; fi
+          if [ "$PRICE_PROVIDER" = "travelpayouts" ] && [ "$HAS_TOKEN" != "true" ] && [ "${{ inputs.test }}" != "true" ]; then echo "::error::Falta el secret TRAVELPAYOUTS_TOKEN (gratis en travelpayouts.com). Para probar sin él, lanza el workflow con 'demo' activado."; ok=0; fi
           if [ "$HAS_NOTIFY" != "true" ]; then echo "::warning::No hay canal de avisos (notificaciones de la app o email): se escaneará pero no recibirás nada."; fi
           [ $ok = 1 ]
 
@@ -103,17 +107,21 @@ jobs:
           DEP_WINDOWS: ${{ vars.DEP_WINDOWS }}
           EXCLUDE_AIRLINES: ${{ vars.EXCLUDE_AIRLINES }}
           TZ: ${{ vars.TZ || 'Europe/Madrid' }}
-        run: python -m app scan
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
+          EMAIL_CONFIG_ENC: ${{ vars.EMAIL_CONFIG_ENC }}
+        run: python -m app ${{ inputs.test && 'test-notify' || 'scan' }}
 
       - name: Generar web pública
-        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo
+        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo && !inputs.test
         env:
           SITE_TITLE: ${{ vars.SITE_TITLE }}
           VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
+          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}       # web privada con contraseña
+          SITE_ADMIN_TOKEN: ${{ secrets.SITE_ADMIN_TOKEN }} # se publica CIFRADO con esa contraseña
         run: python -m app export site
 
       - name: Subir web pública
-        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo
+        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo && !inputs.test
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -128,7 +136,7 @@ jobs:
   # Publica la web de solo lectura en https://<usuario>.github.io/<repositorio>/
   deploy:
     needs: scan
-    if: vars.PUBLISH_SITE == 'true' && !inputs.demo
+    if: vars.PUBLISH_SITE == 'true' && !inputs.demo && !inputs.test
     runs-on: ubuntu-latest
     environment:
       name: github-pages

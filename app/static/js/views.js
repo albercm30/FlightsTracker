@@ -700,13 +700,14 @@ VIEWS.alerts = async (el) => {
 
 /* =================== AJUSTES =================== */
 function isOwnerDevice() {
+  if (S.private) return true;
   let f = false;
   try { if (location.hash.includes('avisos')) localStorage.setItem('ft-owner', '1'); f = localStorage.getItem('ft-owner') === '1'; } catch (e) { f = location.hash.includes('avisos'); }
   return f;
 }
 async function renderPrefs(el) {
   const s = await api('/api/settings');
-  el.innerHTML = `<div class="page-head"><div><h1>Preferencias</h1><p>Se guardan solo en este navegador.</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>${S.private ? 'Ajustes' : 'Preferencias'}</h1><p>${S.private ? 'Tu web privada. Viajeros, equipaje y residente se guardan en este dispositivo.' : 'Se guardan solo en este navegador.'}</p></div>${S.private ? `<button class="btn sm ghost" id="pLogout">${ic('logout')} Cerrar sesión</button>` : ''}</div>
   <div class="card pad grid-form">
     <label class="f">Viajeros<input id="pPax" type="number" min="1" max="9" value="${s.passengers || 1}"></label>
     <label class="f">Equipaje<select id="pBag">${Object.entries(S.meta.baggage_options).map(([k, v]) => `<option value="${k}" ${s.baggage === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
@@ -721,6 +722,7 @@ async function renderPrefs(el) {
   <div class="card pad section"><h2>ℹ️ Sobre los precios</h2><p class="small muted" style="margin:6px 0 0">Precios de búsquedas recientes en Aviasales, actualizados cada 6 horas. Pueden cambiar: confírmalos siempre al reservar. El equipaje y el descuento de residente son estimaciones.</p></div>`;
   paintIcons(el);
   if (isOwnerDevice() || isAdmin()) adminAlertsCard($('#adminAlerts'));
+  $('#pLogout')?.addEventListener('click', () => { if (confirm('¿Cerrar sesión en este dispositivo? Tendrás que volver a escribir la contraseña.')) siteLogout(); });
   const pp = $('#pubPushBody');
   if (pp) {
     const sup = pushSupport();
@@ -940,6 +942,9 @@ async function renderCloud() {
       ${ready ? step(c.in_sync, '6. Ajustes y destinos sincronizados', c.in_sync ? 'GitHub usa tus orígenes, destinos y preferencias actuales.' : 'Hay cambios sin subir.') : ''}
       ${ready ? step(c.schedule_enabled, '7. Escaneo automático cada 6 h', `<label class="check"><input type="checkbox" id="ghSched" ${c.schedule_enabled ? 'checked' : ''}> Activado</label>`) : ''}
       ${ready ? step(c.pages_enabled && c.pages_is_actions, '8. Web pública', c.pages_url ? `<a href="${esc(c.pages_url)}" target="_blank" rel="noopener"><b>${esc(c.pages_url)}</b></a> <button class="btn sm ghost" id="ghShare">${ic('share')} Compartir</button><div class="tiny">Se actualiza tras cada escaneo real (el primero tarda ~5 min).</div>` : 'Se activa al sincronizar (repositorio público).') : ''}
+      ${ready ? step(!!s.site_password, '9. Web privada con contraseña (recomendado)', s.site_password
+        ? `Activada: tu web pide contraseña <b>una sola vez por dispositivo</b> y la recuerda. Nadie más ve tus precios. Desde ella gestionas destinos, avisos y email.<div class="row" style="margin-top:6px"><input id="ghPw" type="password" autocomplete="new-password" placeholder="Nueva contraseña (para cambiarla)" style="flex:1;min-width:180px"><button class="btn sm" id="ghPwSave">Cambiar</button><button class="btn sm ghost" id="ghPwOff">Quitar</button></div>`
+        : `Pon una contraseña y tu web online será solo tuya. La recordará en tu móvil y ordenador, y podrás añadir destinos y configurar el email desde ella.<div class="row" style="margin-top:6px"><input id="ghPw" type="password" autocomplete="new-password" placeholder="Contraseña (mín. 10 caracteres)" style="flex:1;min-width:180px"><button class="btn sm primary" id="ghPwSave">Activar</button></div>`) : ''}
     </div>
     ${ready ? `<div class="row" style="margin-top:14px">
       <button class="btn primary" id="ghSync">${ic('refresh')} Sincronizar con GitHub</button>
@@ -966,6 +971,14 @@ async function renderCloud() {
   $('#ghDemo')?.addEventListener('click', (e) => act(e.currentTarget, () => api('/api/cloud/run', { method: 'POST', body: { demo: true } }), () => '🔔 Prueba lanzada: el aviso llegará en 1–2 minutos'));
   $('#ghRun')?.addEventListener('click', (e) => act(e.currentTarget, () => api('/api/cloud/run', { method: 'POST', body: { demo: false } }), () => '✈️ Escaneo lanzado en GitHub (unos minutos)'));
   $('#ghShare')?.addEventListener('click', () => shareText('Chollos de vuelos', '✈️ Mira estos chollos de vuelos', c.pages_url));
+  const setPw = (btn, pw) => act(btn, async () => {
+    S.settings = await api('/api/settings', { method: 'PUT', body: { site_password: pw, publish_site: true } });
+    await api('/api/cloud/sync', { method: 'POST', body: { schedule: c.schedule_enabled !== false } });
+    await api('/api/cloud/run', { method: 'POST', body: { demo: false } }).catch(() => {});
+    return true;
+  }, () => (pw ? '🔒 Web privada: en unos minutos te pedirá la contraseña (solo una vez por dispositivo)' : 'La web vuelve a ser pública'));
+  $('#ghPwSave')?.addEventListener('click', (e) => { const pw = $('#ghPw').value; if (pw.length < 10) { toast('Usa al menos 10 caracteres (protege también tu token de GitHub).'); return; } setPw(e.currentTarget, pw); });
+  $('#ghPwOff')?.addEventListener('click', (e) => { if (confirm('¿Quitar la contraseña? Cualquiera con el enlace podrá ver tus precios.')) setPw(e.currentTarget, ''); });
 }
 
 /* =================== ASISTENTE INICIAL =================== */
@@ -1027,7 +1040,7 @@ function setupStaticUI() {
   document.body.classList.add('is-static');
   $$('[data-view="watches"]').forEach((a) => a.remove());
   $$('[data-view="destinations"]').forEach((a) => { a.lastChild.textContent = 'Destinos'; });
-  $$('[data-view="settings"]').forEach((a) => { a.lastChild.textContent = 'Preferencias'; });
+  $$('[data-view="settings"]').forEach((a) => { a.lastChild.textContent = S.private ? 'Ajustes' : 'Preferencias'; });
   ['#scanBtn', '#scanBtnM', '#logoutBtn'].forEach((id) => $(id)?.classList.add('hidden'));
 }
 VIEWS.prefs = null;
@@ -1037,6 +1050,7 @@ window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.in
 if (!window.STATIC && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 (async function init() {
   paintIcons();
+  if (window.STATIC) await siteUnlock();
   try {
     const [cat, countries, settings, meta] = await Promise.all([api('/api/catalog?limit=500'), api('/api/catalog/countries'), api('/api/settings'), api('/api/meta')]);
     Object.assign(S, { catalog: cat, countries, settings, meta });

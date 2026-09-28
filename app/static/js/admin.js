@@ -8,6 +8,7 @@
 
 const ADMIN_KEY = 'ft-admin';
 function adminCfg() {
+  if (S.private && LOCK.admin && LOCK.admin.token) return LOCK.admin;  // web privada: token cifrado con tu contraseña
   try { const a = JSON.parse(localStorage.getItem(ADMIN_KEY) || 'null'); return a && a.token && a.repo ? a : null; } catch (e) { return null; }
 }
 function setAdminCfg(a) { try { if (a) localStorage.setItem(ADMIN_KEY, JSON.stringify(a)); else localStorage.removeItem(ADMIN_KEY); } catch (e) { /* */ } }
@@ -41,9 +42,9 @@ async function ghSetVar(name, value) {
   if (r.status === 404) await gh('/actions/variables', { method: 'POST', body: { name, value } });
   else if (r.status !== 204) { let m = ''; try { m = (await r.json()).message; } catch (e) { /* */ } throw new Error(r.status === 403 ? 'El token no tiene permiso para cambiar variables («Variables: Read and write»).' : `GitHub respondió ${r.status} ${m}`); }
 }
-async function ghRunScan() {
+async function ghRunScan(test = false) {
   const info = await gh('');
-  await gh('/actions/workflows/scan.yml/dispatches', { method: 'POST', body: { ref: info.default_branch || 'main', inputs: { demo: 'false' } } });
+  await gh('/actions/workflows/scan.yml/dispatches', { method: 'POST', body: { ref: info.default_branch || 'main', inputs: { demo: 'false', ...(test ? { test: 'true' } : {}) } } });
 }
 async function ghLastRun() {
   const r = await gh('/actions/workflows/scan.yml/runs?per_page=1', { ok: [200, 404] });
@@ -100,7 +101,7 @@ const staticDestView = async (el) => {
         <div class="chips dest-chips" style="margin-top:12px">${list.map((c) => `<span class="chip">${flag(cityInfo(c).country_code)} ${esc(cityName(c))} <span class="tiny muted">${c}</span>${pubSet.has(c) ? '' : ' <span class="pill warn" title="Aparecerá tras el próximo escaneo">nuevo</span>'}${admin ? `<button class="x" data-rm="${c}" title="Quitar">×</button>` : ''}</span>`).join('') || '<span class="muted small">Sin destinos.</span>'}</div>
         ${admin && changed ? '<p class="tiny muted" style="margin:10px 0 0">Tienes cambios sin guardar.</p>' : ''}
         <p class="tiny muted" id="sdRun" style="margin:10px 0 0"></p></div>
-      ${admin ? `<div class="row section"><span class="tiny muted">Conectado a ${esc(adminCfg().repo)}</span><span class="spacer"></span><button class="btn ghost sm" id="sdOut">Desconectar este móvil</button></div>`
+      ${admin ? (S.private ? '' : `<div class="row section"><span class="tiny muted">Conectado a ${esc(adminCfg().repo)}</span><span class="spacer"></span><button class="btn ghost sm" id="sdOut">Desconectar este móvil</button></div>`)
         : (isOwnerDevice() ? `<div class="section">${adminConnectHtml()}</div>` : '<div class="card pad section small muted">Solo el dueño de esta web puede cambiar los destinos.</div>')}`;
     paintIcons(el);
     if (!admin) { bindAdminConnect(el, () => route(true)); return; }
@@ -117,7 +118,7 @@ const staticDestView = async (el) => {
       const rm = e.target.closest('[data-rm]'); if (rm) { list = list.filter((c) => c !== rm.dataset.rm); draw(); return; }
       const th = e.target.closest('[data-th]'); if (th) { add((S.meta.theme_codes[th.dataset.th] || []).filter((c) => !(S.settings.origins || []).includes(c))); return; }
     };
-    $('#sdOut').onclick = () => { if (confirm('¿Desconectar tu GitHub de este navegador?')) { setAdminCfg(null); route(true); } };
+    if ($('#sdOut')) $('#sdOut').onclick = () => { if (confirm('¿Desconectar tu GitHub de este navegador?')) { setAdminCfg(null); route(true); } };
     $('#sdSave').onclick = async (e) => {
       e.currentTarget.disabled = true;
       try {
@@ -163,8 +164,10 @@ async function adminAlertsCard(box) {
     </div>
     <div class="fl" style="margin-top:12px">Hora de salida</div>
     <div class="chips" id="aWin" style="margin-top:6px">${Object.entries(S.meta.windows || {}).map(([k, l]) => `<button type="button" class="chip ${v.wins.includes(k) ? 'on' : ''}" data-w="${k}">${WIN_ICON[k]} ${esc(l)}</button>`).join('')}</div>
-    <div class="row" style="margin-top:14px"><button class="btn primary" id="aSave">${ic('check')} Guardar</button><span class="tiny muted">Se aplica desde el próximo escaneo.</span></div></div>`;
+    <div class="row" style="margin-top:14px"><button class="btn primary" id="aSave">${ic('check')} Guardar</button><span class="tiny muted">Se aplica desde el próximo escaneo.</span></div></div>
+    <div class="card pad admin-box section" id="emailCard"></div>`;
   paintIcons(box);
+  emailCard($('#emailCard', box));
   $('#aLvl', box).onclick = (e) => { const b = e.target.closest('[data-l]'); if (b) $$('#aLvl [data-l]', box).forEach((x) => x.classList.toggle('on', x === b)); };
   $('#aWin', box).onclick = (e) => { const b = e.target.closest('[data-w]'); if (b) b.classList.toggle('on'); };
   $('#aSave', box).onclick = async (e) => {
@@ -177,6 +180,44 @@ async function adminAlertsCard(box) {
       await ghSetVar('DEP_WINDOWS', $$('#aWin .on', box).map((x) => x.dataset.w).join(','));
       toast('✅ Avisos guardados');
     } catch (err) { toast(err.message, 7000); }
+    btn.disabled = false;
+  };
+}
+
+/* ---------- Email (web privada): se guarda cifrado con tu contraseña en la variable EMAIL_CONFIG_ENC;
+   el escaneo de GitHub lo descifra con el secret SITE_PASSWORD ---------- */
+async function emailCard(box) {
+  if (!S.private || !LOCK.key) {
+    box.innerHTML = '<h2>✉️ Avisos por email</h2><p class="small muted" style="margin:6px 0 0">Para configurar el email desde aquí, activa la <b>web privada con contraseña</b> en la app del ordenador (Ajustes → ☁️ → paso 9).</p>';
+    return;
+  }
+  let cur = null;
+  try { const v = await ghGetVar('EMAIL_CONFIG_ENC'); if (v) cur = JSON.parse(new TextDecoder().decode(await decB64(v))); } catch (e) { /* otra contraseña o sin configurar */ }
+  box.innerHTML = `<h2>✉️ Avisos por email</h2>
+    <p class="small muted" style="margin:6px 0 12px">${cur?.email_to ? `Ahora llegan a <b>${esc(cur.email_to)}</b>.` : 'Recibe los chollos en tu correo.'} Con Gmail necesitas una <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">contraseña de aplicación</a> (no tu contraseña normal).</p>
+    <div class="grid-form">
+      <label class="f">Tu email<input id="emTo" type="email" value="${esc(cur?.email_to || '')}" placeholder="tu@gmail.com"></label>
+      <label class="f">Contraseña de aplicación de Google<input id="emPw" type="password" autocomplete="new-password" placeholder="${cur?.smtp_password ? '•••• guardada (déjalo vacío para mantenerla)' : '16 letras'}"></label>
+    </div>
+    <div class="row" style="margin-top:12px"><button class="btn primary" id="emSave">${ic('check')} Guardar</button><button class="btn" id="emTest">📨 Enviarme un email de prueba</button></div>
+    <p class="tiny muted" id="emMsg" style="margin:8px 0 0">Se guarda cifrado con tu contraseña; solo tu escaneo de GitHub puede leerlo.</p>`;
+  paintIcons(box);
+  $('#emSave', box).onclick = async (e) => {
+    const btn = e.currentTarget; const to = $('#emTo', box).value.trim(), pw = $('#emPw', box).value.replace(/\s+/g, '') || cur?.smtp_password || '';
+    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { toast('Escribe un email válido'); return; }
+    if (!pw) { toast('Falta la contraseña de aplicación'); return; }
+    btn.disabled = true;
+    try {
+      const cfg = { email_to: to, smtp_password: pw };
+      if (!/@(gmail|googlemail)\.com$/i.test(to)) toast('Aviso: está pensado para Gmail. Con otros correos puede no funcionar.', 6000);
+      await ghSetVar('EMAIL_CONFIG_ENC', await encJson(cfg)); cur = cfg;
+      $('#emPw', box).value = ''; toast('✅ Email guardado');
+    } catch (err) { toast(err.message, 7000); }
+    btn.disabled = false;
+  };
+  $('#emTest', box).onclick = async (e) => {
+    const btn = e.currentTarget; btn.disabled = true;
+    try { await ghRunScan(true); toast('📨 Enviando… te llegará en 1–2 minutos.', 6000); } catch (err) { toast(err.message, 7000); }
     btn.disabled = false;
   };
 }

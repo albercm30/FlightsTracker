@@ -408,6 +408,8 @@ class CloudTest(unittest.TestCase):
                     r.status_code = 404
             elif method == "POST" and path == "/actions/variables":
                 self.vars[json["name"]] = json["value"]; r.status_code = 201
+            elif method == "DELETE" and path.startswith("/actions/secrets/"):
+                self.secrets.pop(path.rsplit("/", 1)[1], None); r.status_code = 204
             elif method == "DELETE" and path.startswith("/actions/variables/"):
                 self.vars.pop(path.rsplit("/", 1)[1], None); r.status_code = 204
             elif path == "/pages":
@@ -507,6 +509,42 @@ class ExportTest(unittest.TestCase):
                            for r, _, fs in os.walk(os.path.join(site, "data")) for f in fs)
             self.assertNotIn("SECRETO", blob)
             self.assertNotIn("TG-SECRET", blob)
+
+
+class PrivateSiteTest(unittest.TestCase):
+    def test_locked_export_and_email_config(self):
+        from app import sitecrypt
+        from app.export import export_site
+        with tempfile.TemporaryDirectory() as tmp:
+            db.init(os.path.join(tmp, "p.db"))
+            db.update_settings({"origins": ["MAD"], "provider": "demo", "github_repo": "alber/Flights"})
+            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('LIS','Lisboa',1,'x')")
+            tracker.run_scan(notify=False)
+            out = os.path.join(tmp, "site")
+            res = export_site(out, password="una-clave-larga", admin_token="github_pat_SECRETO")
+            self.assertTrue(res["private"])
+            blob = ""
+            for r, _d, fs in os.walk(out):
+                for f in fs:
+                    with open(os.path.join(r, f), encoding="utf-8", errors="ignore") as fh:
+                        blob += fh.read()
+            self.assertNotIn("Lisboa", open(os.path.join(out, "data", "destinations.json")).read())
+            self.assertNotIn("github_pat_SECRETO", blob)
+            lock = json.load(open(os.path.join(out, "data", "lock.json")))
+            key = sitecrypt.derive_key("una-clave-larga", "alber/Flights")
+            self.assertEqual(sitecrypt.decrypt(key, lock["check"]), b"flight-tracker-ok")
+            dests = json.loads(sitecrypt.decrypt(key, json.load(open(os.path.join(out, "data", "destinations.json")))["enc"]))
+            self.assertEqual(dests[0]["code"], "LIS")
+            adm = sitecrypt.decrypt_json(key, json.load(open(os.path.join(out, "data", "admin.json")))["enc"])
+            self.assertEqual(adm["token"], "github_pat_SECRETO")
+            # email guardado desde la web -> lo usa el escaneo en GitHub Actions
+            enc = sitecrypt.encrypt_json(key, {"email_to": "yo@gmail.com", "smtp_password": "abcd efgh"})
+            env = {"EMAIL_CONFIG_ENC": enc, "SITE_PASSWORD": "una-clave-larga", "GITHUB_REPOSITORY": "alber/Flights"}
+            from unittest import mock
+            with mock.patch.dict(os.environ, env):
+                db.apply_env_config()
+            s = db.get_settings()
+            self.assertEqual((s["email_to"], s["smtp_host"], s["smtp_password"]), ("yo@gmail.com", "smtp.gmail.com", "abcdefgh"))
 
 
 class WebPushTest(unittest.TestCase):

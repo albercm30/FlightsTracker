@@ -25,8 +25,9 @@ def _write(path, data):
         json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
 
 
-def export_site(out_dir: str, site_title: str = None) -> dict:
-    app = create_app(start_scheduler=False)
+def export_site(out_dir: str, site_title: str = None, password: str = None, admin_token: str = None) -> dict:
+    """password: si se indica, la web queda PRIVADA (datos cifrados, se entra con contraseña)."""
+    app = create_app(db_path=db._db_path, start_scheduler=False)  # la BD ya abierta, si la hay
     c = app.test_client()
     with c.session_transaction() as sess:  # por si hay APP_PASSWORD
         sess["auth"] = True
@@ -45,14 +46,14 @@ def export_site(out_dir: str, site_title: str = None) -> dict:
     from . import tracker
     tracker._resident_region.update(v="", t=0)
     try:
-        return _export(out_dir, get, s, site_title)
+        return _export(out_dir, get, s, site_title, password, admin_token)
     finally:
         if saved_res:
             db.update_settings({"resident_discount": saved_res})
         tracker._resident_region.update(t=0)
 
 
-def _export(out_dir, get, s, site_title):
+def _export(out_dir, get, s, site_title, password=None, admin_token=None):
     static_src = os.path.join(os.path.dirname(__file__), "static")
     if os.path.isdir(out_dir):
         shutil.rmtree(out_dir)
@@ -140,4 +141,11 @@ def _export(out_dir, get, s, site_title):
     manifest["shortcuts"] = [dict(x, url="./" + x["url"].lstrip("/")) for x in manifest.get("shortcuts", [])]
     _write(os.path.join(out_dir, "manifest.webmanifest"), manifest)
     open(os.path.join(out_dir, ".nojekyll"), "w").close()
-    return {"routes": routes, "destinations": len(dests), "out": out_dir}
+    private = False
+    if password:
+        from .sitecrypt import lock_site
+        repo = meta.get("repo") or ""
+        lock_site(os.path.join(out_dir, "data"), password, repo,
+                  admin={"repo": repo, "token": admin_token} if admin_token and repo else None)
+        private = True
+    return {"routes": routes, "destinations": len(dests), "out": out_dir, "private": private}

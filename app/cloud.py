@@ -165,6 +165,8 @@ def desired_variables(s: dict) -> dict:
         "DEAL_PCT": s.get("deal_pct"),
         "MIN_DAYS_AHEAD": s.get("min_days_ahead"),
         "PUBLISH_SITE": "true" if s.get("publish_site") else "false",
+        "VAPID_PUBLIC_KEY": s.get("vapid_public"),
+        "SITE_URL": s.get("site_url"),
         "SITE_TITLE": s.get("site_title"),
     }
 
@@ -179,6 +181,9 @@ SECRET_MAP = {
     "SMTP_USER": "smtp_user",
     "SMTP_PASSWORD": "smtp_password",
     "EMAIL_TO": "email_to",
+    "SMTP_FROM": "smtp_from",
+    "VAPID_PRIVATE_KEY": "vapid_private",
+    "PUSH_SUBSCRIPTIONS": "push_subscriptions",
 }
 
 
@@ -209,7 +214,7 @@ def status(session=None) -> dict:
         "variables": vars_,
         "secrets": sorted(secrets),
         "has_price_token": "TRAVELPAYOUTS_TOKEN" in secrets,
-        "has_notifications": bool({"NTFY_TOPIC", "TELEGRAM_BOT_TOKEN", "EMAIL_TO"} & secrets),
+        "has_notifications": bool({"NTFY_TOPIC", "TELEGRAM_BOT_TOKEN", "EMAIL_TO", "PUSH_SUBSCRIPTIONS"} & secrets),
         "in_sync": all(str(vars_.get(k, "")) == str(v or "") for k, v in desired_variables(s).items()),
         "runs": [{"id": r["id"], "status": r["status"], "conclusion": r.get("conclusion"), "event": r["event"],
                   "created_at": r["created_at"], "url": r["html_url"],
@@ -225,6 +230,13 @@ def status(session=None) -> dict:
 
 def sync(enable_schedule: bool = True, session=None) -> dict:
     gh, s = _client(session)
+    try:  # recordar la dirección de la web pública para que los avisos la abran al tocarlos
+        pages = gh.pages()
+        if pages and pages.get("html_url") and pages["html_url"] != s.get("site_url"):
+            db.update_settings({"site_url": pages["html_url"]})
+            s = db.get_settings()
+    except CloudError:
+        pass
     if not gh.workflow():
         raise CloudError("El repositorio aún no tiene el workflow «Escaneo programado». Sube el código "
                          "(git push) y vuelve a intentarlo.")
@@ -233,7 +245,8 @@ def sync(enable_schedule: bool = True, session=None) -> dict:
         gh.set_variable(k, v)
         done_vars.append(k)
     gh.set_variable("ENABLE_SCHEDULED_SCAN", "true" if enable_schedule else "false")
-    done_secrets = [name for name, key in SECRET_MAP.items() if gh.set_secret(name, s.get(key))]
+    done_secrets = [name for name, key in SECRET_MAP.items()
+                    if s.get(key) not in (None, "", "[]") and gh.set_secret(name, s.get(key))]
     pages_msg = None
     if s.get("publish_site"):
         try:

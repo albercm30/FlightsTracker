@@ -46,6 +46,7 @@ async function refreshStatus() {
   if (p.running) { $('#scanText').textContent = `Escaneando ${p.current}… ${p.done}/${p.total}`; $('div > div', bar).style.width = `${p.total ? (p.done / p.total) * 100 : 5}%`; }
   $('#logoutBtn').classList.toggle('hidden', !s.auth);
   const ban = [];
+  if (isIOS() && !isStandalone() && !S.iosHintClosed) ban.push(`<div class="banner info" id="iosHint">📲 <div><b>Úsala como app en tu iPhone:</b> pulsa <b>Compartir</b> (el cuadrado con la flecha ↑) → <b>Añadir a pantalla de inicio</b>. Tendrás su icono, pantalla completa y notificaciones.</div><button class="btn icon ghost" onclick="S.iosHintClosed=1;this.parentElement.remove()">✕</button></div>`);
   if (s.insecure) ban.push(`<div class="banner warn">${ic('zap')}<div><b>Tu app está accesible desde internet sin contraseña.</b> Define <code>APP_PASSWORD</code> en el servidor para protegerla.</div></div>`);
   $('#banners').innerHTML = ban.join('');
   return s;
@@ -600,9 +601,29 @@ async function renderPrefs(el) {
     <label class="f">Descuento de residente<select id="pRes"><option value="">No soy residente</option><option value="canarias" ${s.resident_discount === 'canarias' ? 'selected' : ''}>Residente en Canarias (75 %)</option><option value="baleares" ${s.resident_discount === 'baleares' ? 'selected' : ''}>Residente en Baleares (75 %)</option></select></label>
     <button class="btn primary" id="pSave">${ic('check')} Guardar</button>
   </div>
+  <div class="card pad section ${S.meta.vapid_public ? '' : 'hidden'}" id="pubPush"><h2>🔔 Avisos en este móvil</h2>
+    <p class="small muted" style="margin:6px 0 12px">Recibe los chollos como notificaciones, sin instalar ninguna app.</p>
+    <div id="pubPushBody"></div></div>
   <div class="card pad section"><h2>📱 Instálala en tu móvil</h2><p class="small muted" style="margin:6px 0 0">En el navegador del móvil pulsa «Compartir → Añadir a pantalla de inicio» (iPhone) o «⋮ → Instalar app» (Android).</p></div>
   <div class="card pad section"><h2>ℹ️ Sobre los precios</h2><p class="small muted" style="margin:6px 0 0">Precios de búsquedas recientes en Aviasales, actualizados cada 6 horas. Pueden cambiar: confírmalos siempre al reservar. El equipaje y el descuento de residente son estimaciones.</p></div>`;
   paintIcons(el);
+  const pp = $('#pubPushBody');
+  if (pp) {
+    const sup = pushSupport();
+    pp.innerHTML = sup.ok ? '<button class="btn primary" id="pubPushBtn">🔔 Activar avisos en este móvil</button>' : `<p class="small" style="margin:0">${esc(sup.reason)}</p>`;
+    $('#pubPushBtn')?.addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try {
+        const code = encodeDevice(await subscribePush('push-sw.js', S.meta.vapid_public));
+        pp.innerHTML = `<p class="small" style="margin:0 0 8px">✅ Listo. Último paso: envía este código a tu Flight Tracker del ordenador (<b>Ajustes → Avisos → Añadir tu móvil</b>). Si la web es de un amigo, envíaselo a él.</p>
+          <textarea readonly rows="3" style="font-size:.75rem" id="pubCode">${esc(code)}</textarea>
+          <div class="row" style="margin-top:8px"><button class="btn primary" id="pubShare">${ic('share')} Compartir código</button><button class="btn" id="pubCopy">Copiar</button></div>`;
+        paintIcons(pp);
+        $('#pubCopy').onclick = async () => { try { await navigator.clipboard.writeText(code); toast('Copiado'); } catch (err) { $('#pubCode').select(); } };
+        $('#pubShare').onclick = () => shareText('Código de avisos Flight Tracker', code, '');
+      } catch (err) { toast(err.message, 7000); e.currentTarget.disabled = false; }
+    });
+  }
   $('#pSave').onclick = async () => { S.settings = await api('/api/settings', { method: 'PUT', body: { passengers: +$('#pPax').value, baggage: $('#pBag').value, resident_discount: $('#pRes').value } }); SD.cache = {}; toast('✅ Guardado'); };
 }
 VIEWS.settings = async (el) => {
@@ -646,20 +667,34 @@ VIEWS.settings = async (el) => {
       <label class="f">Ofertas por mensaje${inp('notify_max_items', 'number', 'min="1" max="50"')}</label>
     </div></div>
 
-    <div class="card pad section"><h2>📲 Notificaciones</h2><p class="muted small">Telegram (recomendado), ntfy (push al móvil sin registro) o email. Guarda antes de probar.</p><div class="grid-form" style="margin-top:12px">
-      <label class="f">Telegram: token del bot${inp('telegram_bot_token')}</label>
-      <label class="f">Telegram: chat id${inp('telegram_chat_id')}</label>
-      <label class="f">ntfy: tema${inp('ntfy_topic', 'text', 'placeholder="vuelos-tu-nombre-8k2x"')}</label>
-      <label class="f">ntfy: servidor${inp('ntfy_server')}</label>
-      <label class="f">Email: servidor SMTP${inp('smtp_host', 'text', 'placeholder="smtp.gmail.com"')}</label>
-      <label class="f">Email: puerto${inp('smtp_port', 'number')}</label>
-      <label class="f">Email: usuario${inp('smtp_user')}</label>
-      <label class="f">Email: contraseña${inp('smtp_password', 'password', 'autocomplete="new-password"')}</label>
-      <label class="f">Email: remitente${inp('smtp_from')}</label>
-      <label class="f">Email: enviar a${inp('email_to')}</label>
-      <label class="f">Horas de silencio${inp('quiet_hours', 'text', 'placeholder="23-8"')}</label>
-      <label class="f">Zona horaria${sel('timezone', [['Europe/Madrid', 'Península y Baleares'], ['Atlantic/Canary', 'Canarias'], ['Europe/London', 'Reino Unido'], ['UTC', 'UTC']])}</label>
-    </div><div class="row" style="margin-top:12px"><button type="button" class="btn" id="tNotif">${ic('bell')} Enviar aviso de prueba</button><span id="tRes" class="small muted"></span></div></div>
+    <div class="card pad section"><h2>📲 Avisos</h2>
+      <h3 style="margin-top:14px">🔔 Notificaciones de la app <span class="pill good">sin instalar nada</span></h3>
+      <p class="small muted" style="margin:4px 0 10px">Llegan como las de cualquier app, en este ordenador y en tu móvil.</p>
+      <div id="pushBox"><div class="skel" style="height:60px"></div></div>
+
+      <h3 style="margin-top:18px">✉️ Email</h3>
+      <div class="grid-form" style="margin-top:8px">
+        <label class="f">Tu email${inp('email_to', 'email', 'placeholder="tu@gmail.com"')}</label>
+        <label class="f">Contraseña de aplicación de Google${inp('smtp_password', 'password', 'autocomplete="new-password" placeholder="16 letras"')}</label>
+      </div>
+      <p class="tiny muted" style="margin:6px 0 0">Con Gmail: crea una <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">contraseña de aplicación</a> (necesita la verificación en 2 pasos) y pégala aquí. No es tu contraseña normal.</p>
+
+      <details style="margin-top:14px"><summary class="small muted" style="cursor:pointer">Otros canales y opciones (opcional)</summary>
+      <div class="grid-form" style="margin-top:12px">
+        <label class="f">Servidor SMTP (si no es Gmail)${inp('smtp_host', 'text', 'placeholder="smtp.gmail.com"')}</label>
+        <label class="f">Puerto${inp('smtp_port', 'number')}</label>
+        <label class="f">Usuario SMTP${inp('smtp_user')}</label>
+        <label class="f">Remitente${inp('smtp_from')}</label>
+        <label class="f">Telegram: token del bot${inp('telegram_bot_token')}</label>
+        <label class="f">Telegram: chat id${inp('telegram_chat_id')}</label>
+        <label class="f">ntfy: tema${inp('ntfy_topic')}</label>
+        <label class="f">ntfy: servidor${inp('ntfy_server')}</label>
+      </div></details>
+      <div class="grid-form" style="margin-top:14px">
+        <label class="f">Horas de silencio${inp('quiet_hours', 'text', 'placeholder="23-8"')}</label>
+        <label class="f">Zona horaria${sel('timezone', [['Europe/Madrid', 'Península y Baleares'], ['Atlantic/Canary', 'Canarias'], ['Europe/London', 'Reino Unido'], ['UTC', 'UTC']])}</label>
+      </div>
+      <div class="row" style="margin-top:12px"><button type="button" class="btn" id="tNotif">${ic('bell')} Probar todos los avisos</button><span id="tRes" class="small muted"></span></div></div>
 
     <div class="card pad section"><h2>⏱️ Escaneo automático</h2><div class="grid-form" style="margin-top:12px">
       <label class="f">Cada (horas)${inp('scan_interval_hours', 'number', 'min="1" max="168"')}</label>
@@ -683,6 +718,10 @@ VIEWS.settings = async (el) => {
   $('#sf').onsubmit = async (e) => {
     e.preventDefault(); const body = { origins };
     for (const x of e.target.elements) if (x.name) body[x.name] = x.value;
+    const em = (body.email_to || '').trim().toLowerCase();
+    if (em && !body.smtp_host && /@(gmail|googlemail)\.com$/.test(em)) Object.assign(body, { smtp_host: 'smtp.gmail.com', smtp_port: 587, smtp_user: em, smtp_from: em });
+    if (em && body.smtp_host && !body.smtp_user) body.smtp_user = em;
+    if (body.smtp_password) body.smtp_password = body.smtp_password.replace(/\s+/g, '');
     try {
       S.settings = await api('/api/settings', { method: 'PUT', body }); $('#sMsg').textContent = '✅ Guardado'; setTimeout(() => ($('#sMsg').textContent = ''), 2500); refreshStatus();
       if (S.cloud?.configured && S.cloud?.workflow) { toast('☁️ Sincronizando con GitHub…'); api('/api/cloud/sync', { method: 'POST', body: { schedule: S.cloud.schedule_enabled !== false } }).then(() => { toast('☁️ GitHub actualizado'); renderCloud(); }).catch((e) => toast(e.message)); }
@@ -690,10 +729,47 @@ VIEWS.settings = async (el) => {
   };
   $('#tNotif').onclick = async () => { $('#tRes').textContent = 'Enviando…'; const r = await api('/api/settings/test-notification', { method: 'POST' }); $('#tRes').textContent = r.error || Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(' · '); };
   $('#reOnb').onclick = onboarding;
+  renderPush();
   renderCloud();
   if (S.installPrompt) { $('#installBtn').hidden = false; $('#installBtn').onclick = () => S.installPrompt.prompt(); }
 };
 VIEWS.more = () => {};
+
+/* =================== NOTIFICACIONES PROPIAS (Web Push) =================== */
+async function renderPush() {
+  const box = $('#pushBox'); if (!box) return;
+  const [devs, key] = await Promise.all([api('/api/push/devices'), api('/api/push/key')]);
+  const sup = pushSupport();
+  box.innerHTML = `
+    ${devs.length ? `<div class="list">${devs.map((d) => `<div class="card item" style="padding:8px 12px">📱<div class="grow"><b>${esc(d.name)}</b><div class="tiny muted">desde ${esc(d.added || '—')}</div></div><button type="button" class="btn sm ghost danger" data-rmdev="${d.id}">${ic('trash')}</button></div>`).join('')}</div>`
+    : '<p class="small muted" style="margin:0">Aún no hay dispositivos.</p>'}
+    <div class="row" style="margin-top:10px">
+      <button type="button" class="btn primary" id="pushHere" ${sup.ok ? '' : 'disabled'}>🔔 Activar en este ordenador</button>
+      ${devs.length ? '<button type="button" class="btn" id="pushTest">Enviar prueba</button>' : ''}
+      ${sup.ok ? '' : `<span class="small muted">${esc(sup.reason)}</span>`}
+    </div>
+    <details style="margin-top:12px" ${devs.length ? '' : 'open'}><summary style="cursor:pointer;font-weight:700">📱 Añadir tu móvil (o el de un amigo)</summary>
+      <ol class="small" style="margin:8px 0;padding-left:18px">
+        <li>Activa la web pública en «☁️ Avisos 24/7» (arriba) y ábrela en el móvil.</li>
+        <li>En iPhone: «Compartir → Añadir a pantalla de inicio» y ábrela desde el icono.</li>
+        <li>Ve a <b>Preferencias → Activar avisos en este móvil</b> y pulsa <b>Compartir código</b>.</li>
+        <li>Pega aquí el código:</li></ol>
+      <div class="row"><input id="devCode" placeholder="Código del dispositivo" style="flex:1;min-width:220px"><input id="devName" placeholder="Nombre (p. ej. Mi móvil)" style="width:180px"><button type="button" class="btn" id="devAdd">${ic('plus')} Añadir</button></div>
+    </details>`;
+  paintIcons(box);
+  box.onclick = async (e) => { const b = e.target.closest('[data-rmdev]'); if (b) { await api(`/api/push/devices/${b.dataset.rmdev}`, { method: 'DELETE' }); renderPush(); } };
+  $('#pushHere')?.addEventListener('click', async (e) => {
+    e.currentTarget.disabled = true;
+    try { const sub = await subscribePush('/sw.js', key.public_key); await api('/api/push/devices', { method: 'POST', body: { subscription: sub, name: deviceName() } }); toast('🔔 Notificaciones activadas en este ordenador'); }
+    catch (err) { toast(err.message, 6000); }
+    renderPush();
+  });
+  $('#pushTest')?.addEventListener('click', async () => { try { const r = await api('/api/push/test', { method: 'POST' }); toast(`🔔 Prueba enviada: ${r.push}`); } catch (err) { toast(err.message, 6000); } });
+  $('#devAdd').onclick = async () => {
+    try { await api('/api/push/devices', { method: 'POST', body: { code: $('#devCode').value, name: $('#devName').value } }); toast('📱 Dispositivo añadido. Si usas GitHub, se sincroniza solo.'); renderPush(); }
+    catch (err) { toast(err.message, 6000); }
+  };
+}
 
 /* =================== NUBE: avisos 24/7 + web pública (GitHub) =================== */
 async function renderCloud() {
@@ -768,9 +844,11 @@ function onboarding() {
         <label class="f">Vigilar<select id="obTrip"><option value="both" ${st.trip === 'both' ? 'selected' : ''}>Ida y vuelta + solo ida</option><option value="rt" ${st.trip === 'rt' ? 'selected' : ''}>Ida y vuelta</option><option value="ow" ${st.trip === 'ow' ? 'selected' : ''}>Solo ida</option></select></label>
         <label class="f">Noches (mín.)<input id="obMin" type="number" min="1" value="${st.min}"></label><label class="f">Noches (máx.)<input id="obMax" type="number" min="1" value="${st.max}"></label>
       </div><div style="margin-top:14px">${paxBagControl('obPB', st.pax, st.bag)}</div>`,
-    () => `<h2>¿Cómo quieres recibir los avisos?</h2><p class="muted">La forma más rápida: instala la app gratuita <b>ntfy</b> en tu móvil y suscríbete a este tema privado.</p>
-      <label class="f">Tema de ntfy<input id="obNtfy" value="${esc(st.ntfy || 'vuelos-' + Math.random().toString(36).slice(2, 8))}"></label>
-      <p class="small muted">También puedes usar Telegram o email desde Ajustes. Si prefieres configurarlo luego, deja el campo vacío.</p>`,
+    () => `<h2>¿Cómo quieres recibir los avisos?</h2><p class="muted">Sin instalar ninguna app: notificaciones en este ordenador y, si quieres, email.</p>
+      <button class="btn primary" id="obPush" ${pushSupport().ok ? '' : 'disabled'}>🔔 Activar notificaciones aquí</button> <span class="small muted" id="obPushRes">${pushSupport().ok ? '' : esc(pushSupport().reason)}</span>
+      <div class="grid-form" style="margin-top:14px"><label class="f">Tu email (opcional)<input id="obEmail" type="email" placeholder="tu@gmail.com" value="${esc(st.email || '')}"></label>
+      <label class="f">Contraseña de aplicación de Google<input id="obPass" type="password" placeholder="16 letras"></label></div>
+      <p class="tiny muted">La contraseña de aplicación se crea en <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>. Para el móvil: Ajustes → Avisos → «Añadir tu móvil».</p>`,
   ];
   const draw = () => {
     openSheet(`<div class="sh-head"><h2>✨ Configura tu buscador</h2><button class="btn icon ghost close" data-close>${ic('x')}</button></div>
@@ -783,13 +861,19 @@ function onboarding() {
     };
     if ($('#obIn')) { attachAC($('#obIn')); $('#obAdd').onclick = () => { const r = resolvePlace($('#obIn').value); if (r.destinations) st.dests.push(...r.destinations); else if (r.country) st.dests.push(...S.catalog.filter((c) => c.country_code === r.country).map((c) => c.code)); else return toast('Elige de la lista'); $('#obIn').value = ''; $('#obExtra').textContent = st.dests.filter((x) => !popular.includes(x)).map(cityName).join(', '); }; }
     $('#obBack')?.addEventListener('click', () => { st.step--; draw(); });
+    $('#obPush')?.addEventListener('click', async (e) => {
+      e.currentTarget.disabled = true;
+      try { const key = await api('/api/push/key'); const sub = await subscribePush('/sw.js', key.public_key); await api('/api/push/devices', { method: 'POST', body: { subscription: sub, name: deviceName() } }); $('#obPushRes').textContent = '✅ Activadas'; }
+      catch (err) { $('#obPushRes').textContent = err.message; e.currentTarget.disabled = false; }
+    });
     $('#obNext').onclick = async () => {
       if (st.step === 0 && !st.origins.length) return toast('Elige al menos un aeropuerto');
       if (st.step === 1 && !st.dests.length) return toast('Elige al menos un destino');
       if (st.step === 2) { st.trip = $('#obTrip').value; st.min = +$('#obMin').value; st.max = +$('#obMax').value; const pb = readPaxBag($('#obPB')); st.pax = pb.pax; st.bag = pb.baggage; }
       if (st.step === 3) {
-        st.ntfy = $('#obNtfy').value.trim();
-        await api('/api/settings', { method: 'PUT', body: { origins: st.origins, trip_type: st.trip, min_nights: st.min, max_nights: st.max, passengers: st.pax, baggage: st.bag, ntfy_topic: st.ntfy, onboarded: true } });
+        const em = $('#obEmail').value.trim(), pw = $('#obPass').value.replace(/\s+/g, '');
+        const mail = em && pw ? { email_to: em, smtp_password: pw, smtp_user: em, smtp_from: em, smtp_host: /@(gmail|googlemail)\.com$/i.test(em) ? 'smtp.gmail.com' : '', smtp_port: 587 } : {};
+        await api('/api/settings', { method: 'PUT', body: { origins: st.origins, trip_type: st.trip, min_nights: st.min, max_nights: st.max, passengers: st.pax, baggage: st.bag, onboarded: true, ...mail } });
         await api('/api/destinations', { method: 'POST', body: { codes: [...new Set(st.dests)] } });
         S.settings = await api('/api/settings'); closeSheet(); await startScan(); route(true); return;
       }

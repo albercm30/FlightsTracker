@@ -57,7 +57,8 @@ def _export(out_dir, get, s, site_title):
         shutil.rmtree(out_dir)
     os.makedirs(out_dir)
     shutil.copytree(static_src, os.path.join(out_dir, "static"),
-                    ignore=shutil.ignore_patterns("index.html", "login.html", "sw.js", "manifest.webmanifest"))
+                    ignore=shutil.ignore_patterns("index.html", "login.html", "sw.js", "push-sw.js", "manifest.webmanifest"))
+    shutil.copy(os.path.join(static_src, "push-sw.js"), os.path.join(out_dir, "push-sw.js"))
     d = lambda *p: os.path.join(out_dir, "data", *p)  # noqa: E731
 
     status = get("/api/status")
@@ -75,6 +76,7 @@ def _export(out_dir, get, s, site_title):
     from .tracker import RESIDENT_AIRPORTS, TAX_PER_LEG
     meta["resident_airports"] = {k: sorted(v) for k, v in RESIDENT_AIRPORTS.items()}
     meta["tax_per_leg"] = TAX_PER_LEG
+    meta["vapid_public"] = s.get("vapid_public") or ""
     _write(d("meta.json"), meta)
 
     cat = get("/api/catalog?limit=1000")

@@ -43,7 +43,7 @@ jobs:
       - name: Comprobar configuración
         env:
           HAS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN != '' }}
-          HAS_NOTIFY: ${{ secrets.NTFY_TOPIC != '' || secrets.TELEGRAM_BOT_TOKEN != '' || secrets.EMAIL_TO != '' }}
+          HAS_NOTIFY: ${{ secrets.PUSH_SUBSCRIPTIONS != '' || secrets.EMAIL_TO != '' || secrets.NTFY_TOPIC != '' || secrets.TELEGRAM_BOT_TOKEN != '' }}
           ORIGINS: ${{ vars.ORIGINS }}
           DESTINATIONS: ${{ vars.DESTINATIONS }}
         run: |
@@ -51,7 +51,7 @@ jobs:
           if [ -z "$ORIGINS" ]; then echo "::error::Falta la variable ORIGINS (p. ej. TCI,LPA,MAD)"; ok=0; fi
           if [ -z "$DESTINATIONS" ]; then echo "::error::Falta la variable DESTINATIONS (p. ej. LON,ROM,NYC)"; ok=0; fi
           if [ "$PRICE_PROVIDER" = "travelpayouts" ] && [ "$HAS_TOKEN" != "true" ]; then echo "::error::Falta el secret TRAVELPAYOUTS_TOKEN (gratis en travelpayouts.com). Para probar sin él, lanza el workflow con 'demo' activado."; ok=0; fi
-          if [ "$HAS_NOTIFY" != "true" ]; then echo "::warning::No hay canal de avisos (NTFY_TOPIC, TELEGRAM_* o EMAIL_TO): se escaneará pero no recibirás nada."; fi
+          if [ "$HAS_NOTIFY" != "true" ]; then echo "::warning::No hay canal de avisos (notificaciones de la app o email): se escaneará pero no recibirás nada."; fi
           [ $ok = 1 ]
 
       - uses: actions/setup-python@v5
@@ -78,6 +78,11 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
+          PUSH_SUBSCRIPTIONS: ${{ secrets.PUSH_SUBSCRIPTIONS }}
+          VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
+          SITE_URL: ${{ vars.SITE_URL }}
           ORIGINS: ${{ vars.ORIGINS }}
           DESTINATIONS: ${{ vars.DESTINATIONS }}
           TRIP_TYPE: ${{ vars.TRIP_TYPE || 'rt' }}
@@ -98,6 +103,7 @@ jobs:
         if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo
         env:
           SITE_TITLE: ${{ vars.SITE_TITLE }}
+          VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
         run: python -m app export site
 
       - name: Subir web pública

@@ -372,3 +372,40 @@ function weekStrip(start, end, holidays) {
   }
   return `<div class="wk">${out.join('')}</div>`;
 }
+
+/* ---------- notificaciones propias (Web Push) ---------- */
+function isIOS() { return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function isStandalone() { return matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; }
+function pushSupport() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window) || !('Notification' in window)) {
+    if (isIOS() && !isStandalone()) return { ok: false, ios: true, reason: 'En iPhone/iPad primero añade la web a la pantalla de inicio (Compartir → «Añadir a pantalla de inicio»), ábrela desde ese icono y vuelve aquí.' };
+    return { ok: false, reason: 'Este navegador no admite notificaciones. Prueba con Chrome, Edge, Firefox o Safari actualizado.' };
+  }
+  if (!window.isSecureContext) return { ok: false, reason: 'Las notificaciones necesitan una dirección segura (https o localhost).' };
+  if (Notification.permission === 'denied') return { ok: false, reason: 'Has bloqueado las notificaciones para esta web. Actívalas en los ajustes del navegador (icono del candado).' };
+  return { ok: true };
+}
+function b64ToBytes(s) { const p = '='.repeat((4 - (s.length % 4)) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, (c) => c.charCodeAt(0)); }
+async function subscribePush(swUrl, key) {
+  const sup = pushSupport(); if (!sup.ok) throw new Error(sup.reason);
+  if (!key) throw new Error('Falta la clave de notificaciones. Sincroniza primero con GitHub desde tu ordenador.');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') throw new Error('No has dado permiso para las notificaciones.');
+  const reg = await navigator.serviceWorker.register(swUrl);
+  await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  const want = b64ToBytes(key);
+  if (sub && sub.options && sub.options.applicationServerKey) {
+    const have = new Uint8Array(sub.options.applicationServerKey);
+    if (have.length !== want.length || have.some((v, i) => v !== want[i])) { await sub.unsubscribe(); sub = null; }
+  }
+  sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: want });
+  return sub.toJSON();
+}
+function deviceName() {
+  const ua = navigator.userAgent;
+  const os = /android/i.test(ua) ? 'Android' : isIOS() ? 'iPhone/iPad' : /windows/i.test(ua) ? 'Windows' : /mac/i.test(ua) ? 'Mac' : 'Linux';
+  const br = /edg\//i.test(ua) ? 'Edge' : /firefox/i.test(ua) ? 'Firefox' : /chrome/i.test(ua) ? 'Chrome' : /safari/i.test(ua) ? 'Safari' : 'Navegador';
+  return `${br} en ${os}`;
+}
+function encodeDevice(sub) { return btoa(unescape(encodeURIComponent(JSON.stringify({ ...sub, name: deviceName(), added: todayIso() })))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, ''); }

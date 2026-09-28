@@ -1,4 +1,5 @@
 """Tests (unittest estándar; también funcionan con `pytest`)."""
+import json
 import os
 import statistics
 import tempfile
@@ -419,6 +420,63 @@ class ExportTest(unittest.TestCase):
                            for r, _, fs in os.walk(os.path.join(site, "data")) for f in fs)
             self.assertNotIn("SECRETO", blob)
             self.assertNotIn("TG-SECRET", blob)
+
+
+class WebPushTest(unittest.TestCase):
+    def test_rfc8291_vector(self):
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from app import webpush as w
+        as_priv = ec.derive_private_key(int.from_bytes(w.ub64("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw"), "big"),
+                                        ec.SECP256R1())
+        out = w.encrypt(b"When I grow up, I want to be a watermelon",
+                        "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
+                        "BTBZMqHH6r4Tts7J_aSIgg", _as_private=as_priv, _salt=w.ub64("DGv6ra1nlYgDCS1FRnbzlw"))
+        self.assertEqual(w.b64u(out), "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLo"
+                         "cInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgS"
+                         "xsj_Qulcy4a-fN")
+
+    def test_vapid_signature_verifies(self):
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
+        from app import webpush as w
+        priv, pub = w.generate_vapid()
+        header = w.vapid_auth("https://fcm.googleapis.com/fcm/send/abc", priv, pub, "mailto:a@b.c")
+        token = header.split("t=")[1].split(",")[0]
+        h, c, sig = token.split(".")
+        raw = w.ub64(sig)
+        key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), w.ub64(pub))
+        key.verify(encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
+                   f"{h}.{c}".encode(), ec.ECDSA(hashes.SHA256()))
+        self.assertIn('"aud":"https://fcm.googleapis.com"', w.ub64(c).decode())
+
+    def test_devices_and_send(self):
+        from unittest import mock
+        from cryptography.hazmat.primitives.asymmetric import ec
+        from app import notifier, webpush as w
+        with tempfile.TemporaryDirectory() as tmp:
+            app = create_app(os.path.join(tmp, "p.db"), start_scheduler=False)
+            c = app.test_client()
+            self.assertTrue(c.get("/api/push/key").json["public_key"])
+            ua = ec.generate_private_key(ec.SECP256R1())
+            sub = {"endpoint": "https://push.example.com/abc",
+                   "keys": {"p256dh": w.b64u(w._pub_raw(ua)), "auth": w.b64u(os.urandom(16))}}
+            code = w.b64u(json.dumps({**sub, "name": "Mi móvil"}).encode())
+            self.assertEqual(c.post("/api/push/devices", json={"code": code}).status_code, 201)
+            self.assertEqual(c.post("/api/push/devices", json={"code": "basura"}).status_code, 400)
+            self.assertEqual(c.get("/api/push/devices").json[0]["name"], "Mi móvil")
+            self.assertEqual(notifier.enabled_channels(db.get_settings())[0], "push")
+            with mock.patch("app.webpush.requests.post") as post:
+                post.return_value.status_code = 201
+                self.assertTrue(notifier.send_push(db.get_settings(), "t", "b").startswith("ok"))
+                hdr = post.call_args.kwargs["headers"]
+                self.assertEqual(hdr["Content-Encoding"], "aes128gcm")
+                self.assertTrue(hdr["Authorization"].startswith("vapid t="))
+            with mock.patch("app.webpush.requests.post") as post:   # suscripción caducada -> se borra
+                post.return_value.status_code = 410
+                with self.assertRaises(RuntimeError):
+                    notifier.send_push(db.get_settings(), "t", "b")
+            self.assertEqual(c.get("/api/push/devices").json, [])
 
 
 class NotifierTest(unittest.TestCase):

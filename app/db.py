@@ -144,6 +144,10 @@ DEFAULT_SETTINGS = {
     "resident_discount": "",       # "" | canarias | baleares  (75 % en vuelos nacionales)
     "quiet_hours": "",             # p. ej. "23-8": sin avisos por la noche (se envían después)
     "timezone": "Europe/Madrid",
+    "vapid_public": "",            # notificaciones propias (Web Push): clave pública
+    "vapid_private": "",           # ... y privada (se genera sola)
+    "push_subscriptions": "[]",    # dispositivos suscritos (JSON)
+    "site_url": "",                # dirección de la web pública (para abrirla al tocar un aviso)
     "github_token": "",
     "github_repo": "",
     "publish_site": True,
@@ -185,12 +189,17 @@ ENV_MAP = {
     "baggage": "BAGGAGE",
     "quiet_hours": "QUIET_HOURS",
     "months_ahead": "MONTHS_AHEAD",
+    "vapid_public": "VAPID_PUBLIC_KEY",
+    "vapid_private": "VAPID_PRIVATE_KEY",
+    "push_subscriptions": "PUSH_SUBSCRIPTIONS",
+    "site_url": "SITE_URL",
     "direct_only": "DIRECT_ONLY",
     "deal_pct": "DEAL_PCT",
     "min_days_ahead": "MIN_DAYS_AHEAD",
 }
 
-SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password", "github_token"}
+SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password", "github_token",
+               "vapid_private", "push_subscriptions"}
 CHOICES = {
     "trip_type": {"ow", "rt", "both"},
     "baggage": {"personal", "cabin", "checked", "cabin_checked"},
@@ -271,6 +280,15 @@ def init(path: str):
         if "origins" not in existing and os.environ.get("ORIGINS"):
             origins = [o.strip().upper() for o in os.environ["ORIGINS"].split(",") if o.strip()]
             c.execute("UPDATE settings SET value=? WHERE key='origins'", (json.dumps(origins),))
+        pub = c.execute("SELECT value FROM settings WHERE key='vapid_public'").fetchone()
+        if not pub or not json.loads(pub[0]):
+            try:
+                from .webpush import generate_vapid
+                priv_k, pub_k = generate_vapid()
+                c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('vapid_private', ?)", (json.dumps(priv_k),))
+                c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('vapid_public', ?)", (json.dumps(pub_k),))
+            except ImportError:
+                pass
         if not c.execute("SELECT 1 FROM settings WHERE key='_secret_key'").fetchone():
             c.execute("INSERT INTO settings(key, value) VALUES('_secret_key', ?)", (json.dumps(secrets.token_hex(32)),))
 

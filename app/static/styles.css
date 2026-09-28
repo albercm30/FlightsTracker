@@ -514,3 +514,5 @@ details.why summary { cursor: pointer; font-weight: 700; color: var(--brand); fo
 .cstep code { background: var(--surface-2); padding: 1px 6px; border-radius: 6px; font-size: .82rem; }
 .alert .meta .datechip { white-space: normal; }
 .alert > div { min-width: 0; }
+/* iPhone instalado como app: respetar la muesca */
+@media (display-mode: standalone) { .topbar { padding-top: calc(12px + env(safe-area-inset-top)); } }

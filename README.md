@@ -98,11 +98,15 @@ Son rangos orientativos de reservar online con antelación. En junio de 2026 la 
 - Tiene **horas de silencio** (por ejemplo, `23-8`): lo que se detecte de noche se envía por la mañana.
 - Envía **un único resumen** por escaneo.
 
-**Canales:**
+**Canales (sin instalar ninguna app):**
 
-- **Telegram:** crea un bot con @BotFather y consigue tu *chat id* abriendo `https://api.telegram.org/bot<TOKEN>/getUpdates`.
-- **ntfy:** app gratuita; te suscribes a un tema privado.
-- **Email** por SMTP. En Gmail necesitas una contraseña de aplicación.
+- **Notificaciones de la propia app (Web Push):** en Ajustes → Avisos pulsa «Activar en este ordenador». Para el móvil: abre la web pública → Preferencias → «Activar avisos en este móvil» y pega el código en tu app del ordenador. En iPhone, primero «Añadir a pantalla de inicio» (iOS 16.4 o superior).
+- **Email:** tu Gmail y una [contraseña de aplicación](https://myaccount.google.com/apppasswords).
+- Opcionales: Telegram y ntfy.
+
+## 📱 En el iPhone como app
+
+Abre la web pública en Safari → **Compartir → Añadir a pantalla de inicio**. Tendrás icono, pantalla completa y notificaciones, gratis y sin App Store. Una app nativa en la App Store exige la cuenta de desarrollador de Apple (99 $/año).
 
 ## 🧠 ¿Compro ya o espero?
 

@@ -1,6 +1,7 @@
 """Flight Tracker: vigila precios de vuelos y avisa de ofertas."""
 import csv
 import io
+import json
 import logging
 import os
 import secrets
@@ -483,6 +484,66 @@ def create_app(db_path: str = None, start_scheduler: bool = None) -> Flask:
     def delete_watch(wid):
         db.execute("DELETE FROM watches WHERE id=?", (wid,))
         return "", 204
+
+    # ---------------- notificaciones propias (Web Push) ----------------
+    from . import webpush
+
+    def _devices():
+        return webpush.parse_subscriptions(db.get_settings().get("push_subscriptions"))
+
+    def _save_devices(devs):
+        db.update_settings({"push_subscriptions": json.dumps(devs, ensure_ascii=False)})
+        s = db.get_settings()
+        if s.get("github_token") and (s.get("github_repo") or cloud.detect_repo()):
+            threading.Thread(target=lambda: _safe_sync(), daemon=True).start()
+
+    def _safe_sync():
+        try:
+            cloud.sync(cloud.status().get("schedule_enabled", True) is not False)
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger(__name__).warning("Sincronización con GitHub: %s", e)
+
+    @app.get("/api/push/key")
+    def push_key():
+        return jsonify({"public_key": db.get_settings().get("vapid_public")})
+
+    @app.get("/api/push/devices")
+    def push_devices():
+        return jsonify([{"id": i, "name": d.get("name") or "Dispositivo", "added": d.get("added"),
+                         "service": (d["endpoint"].split("/")[2] if "//" in d["endpoint"] else "")}
+                        for i, d in enumerate(_devices())])
+
+    @app.post("/api/push/devices")
+    def push_add():
+        data = request.get_json(force=True, silent=True) or {}
+        try:
+            if data.get("subscription"):
+                sub = webpush.decode_device_code(json.dumps({**data["subscription"], "name": data.get("name")}))
+            else:
+                sub = webpush.decode_device_code(data.get("code", ""))
+                if data.get("name"):
+                    sub["name"] = data["name"][:60]
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        devs = [d for d in _devices() if d["endpoint"] != sub["endpoint"]] + [sub]
+        _save_devices(devs)
+        return jsonify({"ok": True, "count": len(devs)}), 201
+
+    @app.delete("/api/push/devices/<int:idx>")
+    def push_delete(idx):
+        devs = _devices()
+        if 0 <= idx < len(devs):
+            devs.pop(idx)
+            _save_devices(devs)
+        return "", 204
+
+    @app.post("/api/push/test")
+    def push_test():
+        try:
+            return jsonify({"push": notifier.send_push(db.get_settings(), "Flight Tracker",
+                                                       "✅ Aviso de prueba: las notificaciones funcionan.")})
+        except Exception as e:  # noqa: BLE001
+            return jsonify({"error": str(e)}), 400
 
     # ---------------- nube: GitHub Actions + web pública ----------------
     def _cloud(fn, *a):

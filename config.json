@@ -1,0 +1,26 @@
+{
+  "destinations": [
+    "REK"
+  ],
+  "origins": [
+    "MAD",
+    "BCN",
+    "LPA"
+  ],
+  "trip_type": "both",
+  "min_nights": 6,
+  "max_nights": 10,
+  "passengers": 1,
+  "baggage": "cabin",
+  "resident_discount": "canarias",
+  "months_ahead": 12,
+  "alert_level": "excepcional",
+  "alert_drops": false,
+  "min_days_ahead": 14,
+  "max_stops": -1,
+  "max_duration_h": 0,
+  "dep_windows": "",
+  "exclude_airlines": [],
+  "holiday_region": "",
+  "trip_lengths": {}
+}

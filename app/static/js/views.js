@@ -176,23 +176,34 @@ async function runSearch(params, box) {
 }
 
 /* =================== tarjetas =================== */
-function dealCard(d, { showSpark = true } = {}) {
-  const lvl = d.savings >= 0.3 ? 'hot' : d.savings >= 0.12 ? 'good' : 'neutral';
-  const key = encodeURIComponent(JSON.stringify({ origin: d.origin, destination: d.destination, depart_date: d.depart_date, return_date: d.return_date, trip: d.trip }));
-  return `<article class="card deal" data-open="${key}">
-    <div class="band"></div>
+function openKey(d) { return encodeURIComponent(JSON.stringify({ origin: d.origin, destination: d.destination, depart_date: d.depart_date, return_date: d.return_date || null, trip: d.trip })); }
+function stopsHtml(n) { return n == null ? '' : `<span class="stops ${n === 0 ? 'direct' : ''}">${n === 0 ? '✈ Directo' : `${n} escala${n > 1 ? 's' : ''}`}</span>`; }
+function dealCard(d, { showSpark = true, rank = null } = {}) {
+  const region = d.dest_region || cityInfo(d.destination).region;
+  const p = d.resident_price != null ? d.resident_price : d.price;
+  return `<article class="card deal ${rg(region)}" data-open="${openKey(d)}">
+    <div class="cover">${flag(d.dest_cc || cityInfo(d.destination).country_code)}<div class="t"><div class="city">${rank ? `${rank}. ` : ''}${esc(d.dest_name || d.name || cityName(d.destination))}</div>
+      <div class="sub">${esc(d.dest_country || d.country || '')} · desde ${esc(d.origin)}</div></div>${saveBadge(d.savings)}</div>
     <div class="body">
-      <div class="head">${flag(d.dest_cc || d.country_code || cityInfo(d.destination).country_code)}<div style="min-width:0"><div class="city">${esc(d.dest_name || d.name || cityName(d.destination))}</div>
-        <div class="ctry">${esc(d.dest_country || d.country || '')} · desde ${esc(d.origin)}</div></div><span class="spacer"></span>
-        ${d.savings > 0.05 ? `<span class="pill ${lvl}">${pct(d.savings)}</span>` : ''}</div>
-      <div class="price">${money(d.price)} <small>/pers. ${d.trip === 'rt' ? 'i/v' : 'ida'}</small></div>
-      <div class="meta"><span>${ic('calendar')} ${esc(dshort(d.depart_date))}${d.return_date ? ` → ${esc(dshort(d.return_date))} · ${d.nights} n.` : ''}</span><span>${esc(stops(d.transfers))}</span><span>${esc(d.airline_name || '')}</span></div>
-      ${d.baggage && (d.baggage.option !== 'personal' || (d.pax || 1) > 1) ? `<div class="small"><b>${money(d.price_total)}</b> <span class="muted">total${(d.pax || 1) > 1 ? ` · ${d.pax} pers.` : ''}${d.baggage.option !== 'personal' ? ' · con equipaje' : ''}</span></div>` : ''}
-      ${bagLine(d.baggage)}
-      ${showSpark && d.spark && d.spark.length > 2 ? `<div title="Mínimo de cada mes">${sparkline(d.spark)}</div>` : ''}
+      <div class="pricerow"><span class="price">${money(p)}</span><span class="per">/pers. ${d.trip === 'rt' ? 'i/v' : 'ida'}${d.resident_price != null ? ' · 🏝️ residente' : ''}</span></div>
+      ${d.price_total && Math.round(d.price_total) !== Math.round(p) ? `<div class="totline">Total${(d.pax || 1) > 1 ? ` ${d.pax} pers.` : ''}${d.baggage?.fee_est ? ' con equipaje' : ''}: <b>${money(d.price_total)}</b></div>` : ''}
+      <div class="line">${dateChip(d.depart_date, d.return_date, d.nights)}</div>
+      <div class="line">${stopsHtml(d.transfers)}<span>${esc(d.airline_name || '')}</span><span class="spacer"></span>${bagChips(d.baggage)}</div>
+      ${meter(d.price, d.range, { labels: false })}
     </div>
-    <div class="foot">${d.median ? `Habitual ${money(d.median)}` : ''}<span class="spacer"></span>Ver detalle →</div>
   </article>`;
+}
+function spotlight(d) {
+  const region = d.dest_region || cityInfo(d.destination).region;
+  const p = d.resident_price != null ? d.resident_price : d.price;
+  return `<article class="card spot ${rg(region)}" data-open="${openKey(d)}">
+    <div class="cover"><span class="kicker">🔥 Mejor chollo ahora</span><div class="row">${flag(d.dest_cc)}<span class="city">${esc(d.dest_name || d.name)}</span></div>
+      <div class="bigp">${money(p)}</div><div class="sub">${d.trip === 'rt' ? 'ida y vuelta' : 'solo ida'} · desde ${esc(d.origin_name || d.origin)}</div>${saveBadge(d.savings)}</div>
+    <div class="info">
+      <div class="row">${dateChip(d.depart_date, d.return_date, d.nights)}${stopsHtml(d.transfers)}<span class="muted small">${esc(d.airline_name || '')}</span></div>
+      ${meter(d.price, d.range)}
+      <div class="row">${bagChips(d.baggage)}<span class="spacer"></span><button class="btn primary sm">Ver vuelo →</button></div>
+    </div></article>`;
 }
 document.addEventListener('click', (e) => {
   const c = e.target.closest('[data-open]');
@@ -209,39 +220,44 @@ VIEWS.home = async (el) => {
   const s = S.status || await refreshStatus();
   const trips = s.trips; S.homeTrip = S.homeTrip && trips.includes(S.homeTrip) ? S.homeTrip : trips[trips.length - 1];
   el.innerHTML = `
-    ${s.provider === 'demo' ? `<div class="banner info">${ic('zap')}<div><b>Modo demo:</b> precios simulados con un modelo realista. Añade tu token gratuito de Travelpayouts en <a href="#settings">Ajustes</a> para usar precios reales.</div></div>` : ''}
-    <div class="hero"><h1>¿A dónde quieres volar?</h1><p class="sub">Encuentra el día más barato, explora destinos y recibe avisos antes que nadie.</p><div id="homeSearch"></div></div>
+    ${s.provider === 'demo' ? `<div class="banner info">🎲 <div><b>Modo demo</b> · precios simulados. <a href="#settings">Añade tu token gratis</a> para ver precios reales.</div></div>` : ''}
+    <div class="hero"><h1>¿A dónde quieres volar?</h1><p class="sub">El día más barato, en segundos.</p><div id="homeSearch"></div></div>
     <div class="kpis">
-      <div class="card kpi"><div class="v">${s.destinations}</div><div class="l">destinos vigilados</div></div>
-      <div class="card kpi"><div class="v">${s.origins.length}</div><div class="l">aeropuertos de salida</div></div>
-      <div class="card kpi"><div class="v">${s.watches}</div><div class="l">vuelos concretos vigilados</div></div>
-      <div class="card kpi"><div class="v">${s.unread_alerts}</div><div class="l">alertas sin leer</div></div>
+      <a class="card kpi" href="#destinations"><span class="ic a">⭐</span><div><div class="v">${s.destinations}</div><div class="l">destinos</div></div></a>
+      <a class="card kpi" href="#settings"><span class="ic b">🛫</span><div><div class="v">${s.origins.length}</div><div class="l">aeropuertos</div></div></a>
+      <a class="card kpi" href="#watches"><span class="ic c">👀</span><div><div class="v">${s.watches}</div><div class="l">vigilados</div></div></a>
+      <a class="card kpi" href="#alerts"><span class="ic d">🔔</span><div><div class="v">${s.unread_alerts}</div><div class="l">alertas nuevas</div></div></a>
     </div>
-    <div class="section"><div class="section-head"><div><h2>🔥 Chollos en tus destinos</h2><p class="muted small">El precio más barato de cada destino favorito, comparado con su precio habitual del año.</p></div>
+    <div class="section"><div class="section-head"><h2>🔥 Chollos en tus destinos</h2>
       ${trips.length > 1 ? `<div class="seg" id="homeTrip">${trips.map((t) => `<button data-t="${t}" class="${t === S.homeTrip ? 'on' : ''}">${tripLabel(t)}</button>`).join('')}</div>` : ''}</div>
-      <div class="deals" id="homeDeals"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></div>
-    <div class="section"><div class="section-head"><div><h2>🗓️ Próximos puentes</h2><p class="muted small">Aprovecha los festivos: te buscamos la escapada más barata.</p></div><a href="#holidays" class="btn sm">Ver todos</a></div>
+      <div id="homeSpot"></div><div class="deals" id="homeDeals"><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></div>
+    <div class="section"><div class="section-head"><h2>🗓️ Próximos puentes</h2><a href="#holidays" class="btn sm">Ver todos</a></div>
       <div class="holidays" id="homeHol"></div></div>
     <div class="section two">
-      <div><div class="section-head"><h2>Cambios de precio</h2></div><div class="list" id="homeChanges"></div></div>
-      <div><div class="section-head"><h2>Últimas alertas</h2><a href="#alerts" class="small">Ver todas</a></div><div class="list" id="homeAlerts"></div></div>
+      <div><div class="section-head"><h2>📉 Cambios de precio</h2></div><div class="list" id="homeChanges"></div></div>
+      <div><div class="section-head"><h2>🔔 Últimas alertas</h2><a href="#alerts" class="small">Ver todas</a></div><div class="list" id="homeAlerts"></div></div>
     </div>`;
+  paintIcons(el);
   const f = searchForm($('#homeSearch'), { compact: true });
   f.onsubmit = (e) => { e.preventDefault(); const p = f.getParams(); if (p.mode === 'explore') go('explore', { params: p }); else go('search', { params: p }); };
   $('#homeTrip')?.addEventListener('click', (e) => { const b = e.target.closest('[data-t]'); if (b) { S.homeTrip = b.dataset.t; route(true); } });
   const [deals, changes, alerts, hol] = await Promise.all([api(`/api/deals?trip=${S.homeTrip}`), api('/api/changes?limit=8'), api('/api/alerts?limit=6'), api('/api/holidays')]);
   remember(deals);
-  $('#homeDeals').innerHTML = deals.length ? deals.map((d) => dealCard(d)).join('')
-    : `<div class="card empty" style="grid-column:1/-1"><div class="big">✈️</div><h3>${s.destinations ? 'Aún no hay precios' : 'Añade tus destinos favoritos'}</h3>
-      <p>${s.destinations ? 'Pulsa «Escanear ahora» para buscar precios de tus destinos.' : 'Elige ciudades o países y vigilaremos cada día del año.'}</p>
+  if (deals.length) {
+    $('#homeSpot').innerHTML = spotlight(deals[0]);
+    $('#homeDeals').innerHTML = deals.slice(1).map((d) => dealCard(d)).join('');
+  } else {
+    $('#homeDeals').innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">✈️</div><h3>${s.destinations ? 'Aún no hay precios' : 'Añade tus destinos favoritos'}</h3>
       ${s.destinations ? '<button class="btn primary" onclick="startScan()">Escanear ahora</button>' : '<a class="btn primary" href="#destinations">Añadir destinos</a>'}</div>`;
+  }
   $('#homeHol').innerHTML = hol.items.slice(0, 3).map(holCard).join('') || '<p class="muted small">No hay festivos próximos.</p>';
+  paintIcons($('#homeHol'));
   $('#homeChanges').innerHTML = changes.length ? changes.map((c) => `
-    <div class="card item" data-open="${encodeURIComponent(JSON.stringify({ origin: c.origin, destination: c.destination, depart_date: c.depart_date, trip: c.trip }))}" style="cursor:pointer">
-      ${flag(cityInfo(c.destination).country_code)}<div class="grow"><div class="title">${esc(c.origin)} → ${esc(c.name)} <span class="muted small">· ${tripLabel(c.trip)}</span></div>
-      <div class="small muted">${esc(c.date_label)} · ${money(c.prev_price)} → <b style="color:var(--ink)">${money(c.price)}</b> · ${ago(c.seen_at)}</div></div>
-      <span class="delta ${c.pct < 0 ? 'down' : 'up'}">${c.pct < 0 ? '▼' : '▲'} ${Math.abs(c.pct).toFixed(0)}%</span></div>`).join('')
-    : '<div class="card empty small">Los cambios aparecen a partir del segundo escaneo.</div>';
+    <div class="card item" data-open="${openKey({ ...c, return_date: null })}" style="cursor:pointer">
+      ${flag(cityInfo(c.destination).country_code)}<div class="grow"><div class="title">${esc(c.origin)} → ${esc(c.name)}</div>
+      <div class="small muted">${esc(dshort(c.depart_date))} · ${tripLabel(c.trip).toLowerCase()} · ${ago(c.seen_at)}</div></div>
+      <div style="text-align:right"><div style="font-weight:900">${money(c.price)}</div><span class="delta ${c.pct < 0 ? 'down' : 'up'}">${c.pct < 0 ? '▼' : '▲'} ${Math.abs(c.pct).toFixed(0)}%</span></div></div>`).join('')
+    : '<div class="card empty small">Aparecen a partir del segundo escaneo.</div>';
   $('#homeAlerts').innerHTML = alerts.length ? alerts.map(alertItem).join('') : '<div class="card empty small">Sin alertas todavía.</div>';
   if (!s.onboarded) onboarding();
 };
@@ -249,7 +265,7 @@ VIEWS.home = async (el) => {
 /* =================== MEJOR DÍA =================== */
 VIEWS.search = (el) => {
   const pend = S.pending?.view === 'search' ? S.pending.params : null; S.pending = null;
-  el.innerHTML = `<div class="page-head"><div><h1>¿Qué día sale más barato?</h1><p>Elige origen y destino (ciudad o país entero). Miramos todos los días del periodo y te decimos cuándo volar.</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>¿Qué día sale más barato?</h1><p>Ciudad o país entero: te decimos el día más barato.</p></div></div>
     <div id="sForm"></div><div id="sRes" class="section"></div>`;
   const f = searchForm($('#sForm'), { values: pend || S.lastSearch || {} });
   f.onsubmit = async (e) => {
@@ -266,20 +282,20 @@ function renderDays(box, r) {
   const b = r.best, a = r.advice, P = r.params;
   remember([b, ...r.top, ...r.by_month]);
   const key = encodeURIComponent(JSON.stringify({ origin: b.origin, destination: b.destination, depart_date: b.depart_date, return_date: b.return_date, trip: b.trip }));
+  const pp = b.resident_price != null ? b.resident_price : b.price;
   box.innerHTML = `
-  <div class="card result-hero">
-    <div class="l">
-      <div class="row">${flag(b.dest_cc)}<span class="muted small">Opción más barata · ${tripLabel(b.trip)}${P.pax > 1 ? ` · ${P.pax} personas` : ''}</span></div>
-      <div class="bigprice" style="margin-top:8px">${money(b.price)} <span class="small muted" style="font-size:1rem;font-weight:600">/pers.</span></div>
-      <p style="margin:8px 0 4px;font-size:1.05rem"><b>${esc(dlong(b.depart_date))}</b>${b.return_date ? `<br>vuelta <b>${esc(dlong(b.return_date))}</b> · ${b.nights} noches` : ''}</p>
-      <p class="muted" style="margin:0 0 10px">${esc(b.origin_name)} (${esc(b.origin)}) → ${esc(b.dest_name)} (${esc(b.destination)}) · ${esc(stops(b.transfers))} · ${esc(b.airline_name)}</p>
-      ${bagLine(b.baggage)}
-      <p style="margin:10px 0"><b>Total estimado: ${money(b.price_total)}</b> <span class="muted small">${P.pax > 1 ? `(${P.pax} personas)` : ''}${P.baggage !== 'personal' ? ' con equipaje' : ''} · mediana del periodo ${money(r.median)}${b.savings > 0 ? ` · <span style="color:var(--good);font-weight:700">${pct(b.savings)}</span>` : ''}</span></p>
-      <div class="row"><button class="btn primary" data-open="${key}">Ver detalle y reservar</button><button class="btn" id="exportRes">${ic('download')} CSV</button></div>
+  <div class="card result-hero ${rg(b.dest_region)}">
+    <div class="l" style="padding:0">
+      <div class="cover" style="border-radius:0">${flag(b.dest_cc)}<div class="t"><div class="city">${esc(b.dest_name)}</div><div class="sub">${esc(b.origin_name)} (${esc(b.origin)}) → ${esc(b.destination)} · ${tripLabel(b.trip).toLowerCase()}</div></div>${saveBadge(b.savings)}</div>
+      <div style="padding:18px 20px;display:grid;gap:12px">
+        <div class="row" style="align-items:baseline"><span class="bigprice">${money(pp)}</span><span class="muted">/persona${b.resident_price != null ? ' (residente)' : ''}</span>
+          ${P.pax > 1 || P.baggage !== 'personal' ? `<span class="spacer"></span><span class="fact"><span>Total ${P.pax > 1 ? P.pax + ' pers.' : ''}${P.baggage !== 'personal' ? ' + equipaje' : ''}</span><b>${money(b.price_total)}</b></span>` : ''}</div>
+        <div class="row">${dateChip(b.depart_date, b.return_date, b.nights)}${stopsHtml(b.transfers)}<span class="muted small">${esc(b.airline_name)}</span><span class="spacer"></span>${bagChips(b.baggage)}</div>
+        ${meter(b.price, b.range)}
+        <div class="row"><button class="btn primary" data-open="${key}">Ver vuelo y reservar →</button><button class="btn ghost sm" id="exportRes">${ic('download')} CSV</button></div>
+      </div>
     </div>
-    <div class="r"><div class="verdict ${a.level}">${a.level === 'buy' || a.level === 'good' ? '✅' : a.level === 'watch' ? '👀' : '⏳'} ${esc(a.verdict)}</div>
-      <ul class="reasons">${a.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>
-      <p class="tiny muted" style="margin-top:12px">Consejo orientativo: se basa en los precios del periodo, el histórico registrado y patrones típicos de antelación.${r.provider === 'demo' ? ' <b>Datos simulados (modo demo).</b>' : ''}</p></div>
+    <div class="r">${verdictBox(a)}<p class="tiny muted" style="margin:12px 0 0">Orientativo${r.provider === 'demo' ? ' · datos simulados' : ''}.</p></div>
   </div>
   <div class="tabs" id="resTabs"><button data-t="cal" class="on">Precio por día</button>${r.matrix ? '<button data-t="flex">Flexibilidad (noches)</button>' : ''}<button data-t="top">Mejores opciones</button><button data-t="month">Por meses</button>${r.by_destination.length > 1 ? '<button data-t="dest">Por destino</button>' : ''}</div>
   <div id="resPane"></div>`;
@@ -318,17 +334,17 @@ function renderDays(box, r) {
   $('#exportRes').onclick = () => download('mejores_fechas.csv', toCSV(r.top, [['salida', (o) => o.depart_date], ['vuelta', (o) => o.return_date || ''], ['origen', (o) => o.origin], ['destino', (o) => o.destination], ['precio_persona', (o) => o.price], ['total_estimado', (o) => o.price_total], ['aerolinea', (o) => o.airline_name], ['escalas', (o) => o.transfers], ['enlace', (o) => o.links.aviasales]]), 'text/csv');
 }
 function optRow(o, i) {
-  const key = encodeURIComponent(JSON.stringify({ origin: o.origin, destination: o.destination, depart_date: o.depart_date, return_date: o.return_date, trip: o.trip }));
-  return `<div class="card opt" data-open="${key}">${flag(o.dest_cc)}
-    <div><div class="when">${i === 0 ? '🥇 ' : ''}${esc(dshort(o.depart_date))}${o.return_date ? ` → ${esc(dshort(o.return_date))} <span class="muted small">(${o.nights} noches)</span>` : ''}</div>
-    <div class="small muted">${esc(o.origin)} → ${esc(o.dest_name)} · ${esc(stops(o.transfers))} · ${esc(o.airline_name)} · 🧳 ${BAG_ICON[o.baggage.cabin]} 🛄 ${BAG_ICON[o.baggage.checked]}</div></div>
-    <div class="p"><b>${money(o.price)}</b><div class="tiny muted">total ${money(o.price_total)}</div>${o.level ? `<span class="pill ${LEVEL[o.level][1]}">${LEVEL[o.level][0]}</span>` : ''}</div></div>`;
+  const pp = o.resident_price != null ? o.resident_price : o.price;
+  return `<div class="card opt" data-open="${openKey(o)}">${flag(o.dest_cc)}
+    <div style="min-width:0"><div class="row" style="gap:8px">${i === 0 ? '<span class="pill hot">🥇 Mejor</span>' : ''}${dateChip(o.depart_date, o.return_date, o.nights)}${stopsHtml(o.transfers)}</div>
+    <div class="small muted" style="margin-top:4px">${esc(o.origin)} → ${esc(o.dest_name)} · ${esc(o.airline_name)} ${bagChips(o.baggage)}</div></div>
+    <div class="p"><b>${money(pp)}</b>${o.level ? `<div><span class="pill ${LEVEL[o.level][1]}">${LEVEL[o.level][0]}</span></div>` : ''}</div></div>`;
 }
 
 /* =================== EXPLORAR =================== */
 VIEWS.explore = (el) => {
   const pend = S.pending?.view === 'explore' ? S.pending.params : null; S.pending = null;
-  el.innerHTML = `<div class="page-head"><div><h1>Explorar: ¿a dónde puedo ir barato?</h1><p>Busca en decenas de destinos a la vez y compáralos en un mapa. Ideal si solo sabes cuándo y cuánto quieres gastar.</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Explorar: ¿a dónde puedo ir barato?</h1><p>Decenas de destinos a la vez, en un mapa.</p></div></div>
     <div id="eForm"></div><div id="eRes" class="section"></div>`;
   const vals = pend ? { ...pend, theme: pend.theme || '' } : (S.lastExplore || {});
   const f = searchForm($('#eForm'), { mode: 'explore', values: vals });
@@ -339,12 +355,20 @@ VIEWS.explore = (el) => {
   if (pend) f.requestSubmit();
 };
 function renderExplore(box, r) {
-  if (!r.found) { box.innerHTML = `<div class="card empty"><div class="big">🧭</div><h3>Sin resultados</h3><p>${esc(r.error || 'Prueba con otra zona, más noches o sin presupuesto máximo.')}</p></div>`; return; }
+  if (!r.found) { box.innerHTML = `<div class="card empty"><div class="big">🧭</div><h3>Sin resultados</h3><p>${esc(r.error || 'Prueba otra zona, más noches o sin presupuesto máximo.')}</p></div>`; return; }
   const list = r.by_destination; remember(list);
-  box.innerHTML = `<div class="section-head"><div><h2>${list.length} destinos encontrados</h2><p class="muted small">Ordenados por precio total estimado${r.params.pax > 1 ? ` para ${r.params.pax} personas` : ''}${r.params.baggage !== 'personal' ? ' con equipaje' : ''}.</p></div>
-    <div class="row"><button class="btn sm" id="exFav">${ic('star')} Añadir los 5 primeros a mis destinos</button><button class="btn sm" id="exCsv">${ic('download')} CSV</button></div></div>
-    <div id="map" class="card"></div>
-    <div class="deals section">${list.map((d) => dealCard(d, { showSpark: false })).join('')}</div>`;
+  const top = list.slice(0, 10), maxP = Math.max(...top.map((d) => d.price_total));
+  const pr = list.map((d) => d.price).sort((a, b) => a - b), med = pr[Math.floor(pr.length / 2)];
+  box.innerHTML = `<div class="section-head"><h2>${list.length} destinos · del más barato al más caro</h2>
+    <div class="row"><button class="btn sm" id="exFav">${ic('star')} Guardar top 5</button><button class="btn sm ghost" id="exCsv">${ic('download')} CSV</button></div></div>
+    <div class="explore-top"><div id="map" class="card"></div>
+    <div class="card pad"><h3 style="margin-bottom:10px">🏆 Top 10</h3><div class="rank">${top.map((d, i) => {
+      const col = priceColor(d.price, med, pr[0], pr[pr.length - 1]);
+      return `<div class="r" data-open="${openKey(d)}"><span class="n">${i + 1}</span><span class="nm">${flag(d.dest_cc)}${esc(d.dest_name)}</span>
+        <span class="bar"><i style="width:${Math.max(8, (d.price_total / maxP) * 100)}%;background:${col.bg}"></i></span><span class="p">${money(d.resident_price ?? d.price)}</span></div>`;
+    }).join('')}</div></div></div>
+    <div class="deals section">${list.map((d, i) => dealCard(d, { showSpark: false, rank: i + 1 })).join('')}</div>`;
+  paintIcons(box);
   loadMap(list);
   $('#exFav').onclick = async () => { await api('/api/destinations', { method: 'POST', body: { codes: list.slice(0, 5).map((d) => d.destination) } }); toast('⭐ Añadidos a tus destinos'); };
   $('#exCsv').onclick = () => download('explorar.csv', toCSV(list, [['destino', (o) => o.dest_name], ['pais', (o) => o.dest_country], ['origen', (o) => o.origin], ['salida', (o) => o.depart_date], ['vuelta', (o) => o.return_date || ''], ['precio_persona', (o) => o.price], ['total_estimado', (o) => o.price_total], ['aerolinea', (o) => o.airline_name]]), 'text/csv');
@@ -373,9 +397,10 @@ async function loadMap(list) {
 
 /* =================== FESTIVOS =================== */
 function holCard(h) {
-  return `<div class="card hol"><div class="row"><span class="pill ${h.days_off === 0 ? 'good' : h.days_off === 1 ? 'brand' : 'neutral'}">${h.days_off === 0 ? 'Sin pedir días' : `Pide ${h.days_off} día${h.days_off > 1 ? 's' : ''}`}</span><span class="pill neutral">${h.days} días libres</span></div>
-    <h3>${esc(h.title)}</h3><div class="dates">${esc(dshort(h.start))} → ${esc(dshort(h.end))} <span class="muted small">${d8(h.start).getFullYear()}</span></div>
-    <div class="row"><button class="btn sm primary" data-hol='${esc(JSON.stringify(h))}'>${ic('search')} Buscar escapadas</button></div><div class="res"></div></div>`;
+  return `<div class="card hol"><div class="row"><h3 style="flex:1">${esc(h.title)}</h3><span class="pill ${h.days_off === 0 ? 'good' : h.days_off === 1 ? 'brand' : 'warn'}">${h.days_off === 0 ? '0 días de vacaciones' : `pide ${h.days_off} día${h.days_off > 1 ? 's' : ''}`}</span></div>
+    ${weekStrip(h.start, h.end, h.holidays)}
+    <div class="row"><b>${h.days} días libres</b><span class="muted small">${esc(dshort(h.start))} → ${esc(dshort(h.end))} ${d8(h.start).getFullYear()}</span></div>
+    <button class="btn sm primary" data-hol='${esc(JSON.stringify(h))}'>${ic('search')} Buscar escapadas</button><div class="res"></div></div>`;
 }
 async function searchHoliday(btn) {
   const h = JSON.parse(btn.dataset.hol), card = btn.closest('.hol'), res = $('.res', card);
@@ -387,14 +412,14 @@ async function searchHoliday(btn) {
     const r = await runSearch(params, res);
     if (!r.found) { res.innerHTML = `<p class="small muted">${esc(r.error || 'Sin vuelos para esas fechas.')}</p>`; return; }
     remember(r.by_destination);
-    res.innerHTML = r.by_destination.slice(0, 6).map((d) => `<div class="r" data-open="${encodeURIComponent(JSON.stringify({ origin: d.origin, destination: d.destination, depart_date: d.depart_date, return_date: d.return_date, trip: 'rt' }))}">${flag(d.dest_cc)}<b>${esc(d.dest_name)}</b><span class="muted small">${esc(dshort(d.depart_date))}→${esc(dshort(d.return_date))}</span><span class="spacer"></span><b>${money(d.price)}</b></div>`).join('');
+    res.innerHTML = r.by_destination.slice(0, 6).map((d, i) => `<div class="r" data-open="${openKey(d)}"><span class="muted" style="font-weight:900;width:14px">${i + 1}</span>${flag(d.dest_cc)}<b style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(d.dest_name)}</b>${stopsHtml(d.transfers)}<b>${money(d.resident_price ?? d.price)}</b></div>`).join('');
   } catch (e) { res.innerHTML = `<p class="small" style="color:var(--bad)">${esc(e.message)}</p>`; }
   btn.disabled = false;
 }
 document.addEventListener('click', (e) => { const b = e.target.closest('[data-hol]'); if (b) { e.preventDefault(); if (S.view !== 'holidays') { S.holAuto = b.dataset.hol; go('holidays'); } else searchHoliday(b); } });
 VIEWS.holidays = async (el) => {
   const regions = S.meta.holiday_regions;
-  el.innerHTML = `<div class="page-head"><div><h1>Puentes y festivos</h1><p>Tus próximos días libres y cuántos días de vacaciones necesitas pedir. Pulsa «Buscar escapadas» y te decimos el destino más barato para esas fechas (ida y vuelta).</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Puentes y festivos</h1><div class="wk-legend" style="margin-top:8px"><span><i style="background:var(--hot)"></i>festivo</span><span><i style="background:var(--brand-soft)"></i>fin de semana</span><span><i style="background:var(--warn-soft);outline:2px dashed var(--warn)"></i>día de vacaciones a pedir</span></div></div></div>
     <div class="card pad grid-form">
       <label class="f">Comunidad<select id="holRegion">${Object.entries(regions).map(([k, v]) => `<option value="${k}" ${S.settings.holiday_region === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
       <label class="f">Salgo desde<select id="holOrigin">${originOptions('mine')}</select></label>
@@ -417,7 +442,7 @@ VIEWS.calendar = async (el) => {
   const dests = await api('/api/destinations'); S.destinations = dests;
   const trips = S.status.trips;
   const c = S.calSel || { o: S.settings.origins[0], d: dests[0]?.code, t: trips[trips.length - 1] };
-  el.innerHTML = `<div class="page-head"><div><h1>Calendario de precios</h1><p>El precio más barato de cada día de los próximos 12 meses para una ruta. Pulsa un día para ver detalle, equipaje y reservar.</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Calendario de precios</h1><p>Pulsa cualquier día para ver el vuelo.</p></div></div>
     <div class="card pad row">
       <label class="f" style="min-width:180px">Origen<select id="cO">${S.settings.origins.map((o) => `<option value="${o}" ${o === c.o ? 'selected' : ''}>${esc(cityName(o))} (${o})</option>`).join('')}</select></label>
       <label class="f" style="min-width:200px">Destino<select id="cD">${dests.map((d) => `<option value="${d.code}" ${d.code === c.d ? 'selected' : ''}>${esc(d.name)} (${d.code})</option>`).join('')}</select></label>
@@ -432,7 +457,7 @@ VIEWS.calendar = async (el) => {
     const o = $('#cO').value, d = $('#cD').value, t = $('#cT .on').dataset.t; S.calSel = { o, d, t };
     $('#cCsv').href = `/api/export/calendar.csv?origin=${o}&destination=${d}&trip=${t}`;
     const [cal, hist] = await Promise.all([api(`/api/calendar?origin=${o}&destination=${d}&trip=${t}`), api(`/api/history?origin=${o}&destination=${d}&trip=${t}`)]);
-    remember(cal.quotes.map((q) => ({ ...q, median: cal.median })));
+    remember(cal.quotes.map((q) => ({ ...q, median: cal.median, range: cal.range })));
     const by = new Map(cal.quotes.map((q) => [q.depart_date, q]));
     const pr = cal.quotes.map((q) => q.price).sort((a, b) => a - b);
     const lo = pr[Math.floor(pr.length * 0.03)] ?? 0, hi = pr[Math.floor(pr.length * 0.97)] ?? 1, med = cal.median;
@@ -470,7 +495,7 @@ VIEWS.calendar = async (el) => {
 /* =================== VIGILADOS =================== */
 VIEWS.watches = async (el) => {
   const ws = await api('/api/watches');
-  el.innerHTML = `<div class="page-head"><div><h1>Vuelos vigilados</h1><p>Fechas concretas que sigues de cerca. Te avisamos si el precio sube o baja (umbral en Ajustes) o si baja de tu precio objetivo.</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Vuelos vigilados</h1><p>Te avisamos si suben, bajan o llegan a tu precio objetivo.</p></div></div>
   ${ws.length ? `<div class="list">${ws.map((w) => {
     const diff = w.current_price != null && w.last_price != null ? w.current_price - w.last_price : 0;
     const key = encodeURIComponent(JSON.stringify({ origin: w.origin, destination: w.destination, depart_date: w.depart_date, return_date: w.return_date || null, trip: w.trip }));
@@ -490,7 +515,7 @@ VIEWS.watches = async (el) => {
 VIEWS.destinations = async (el) => {
   const dests = await api('/api/destinations'); S.destinations = dests;
   const themes = Object.entries(S.meta.themes);
-  el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los destinos que vigilamos cada día (desde todos tus aeropuertos). Pon un precio máximo y te avisamos en cuanto baje de ahí.</p></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los vigilamos cada día. Pon un precio máximo y te avisamos al bajar.</p></div></div>
     <div class="card pad"><div class="row">
       <div style="flex:1;min-width:240px"><input id="dIn" placeholder="Añade una ciudad o un país entero…"></div>
       <input id="dMax" type="number" min="0" placeholder="Precio máx. ${sym()} (opcional)" style="width:200px">
@@ -537,14 +562,15 @@ async function addTheme(th) {
 /* =================== ALERTAS =================== */
 function alertItem(a) {
   const [label, cls] = KIND[a.kind] || [a.kind, 'neutral'];
-  const key = encodeURIComponent(JSON.stringify({ origin: a.origin, destination: a.destination, depart_date: a.depart_date, return_date: a.return_date, trip: a.trip }));
-  return `<div class="card item ${a.read ? '' : 'unread'}">${flag(a.dest_cc)}<div class="grow"><div class="row" style="gap:6px"><span class="pill ${cls}">${esc(label)}</span><span class="tiny muted">${ago(a.created_at)}</span></div>
-    <div class="small" style="margin-top:4px">${esc(a.message)}</div><div class="links"><a href="#" data-open="${key}">Ver detalle</a><a href="${esc(a.link || a.links.aviasales)}" target="_blank" rel="noopener">Reservar</a><a href="${esc(a.links.google)}" target="_blank" rel="noopener">Google Flights</a></div></div></div>`;
+  return `<div class="card alert ${a.read ? '' : 'unread'}" data-open="${openKey(a)}" title="${esc(a.message)}">${flag(a.dest_cc)}
+    <div style="min-width:0"><div class="row" style="gap:6px"><span class="pill ${cls}">${esc(label)}</span><span class="route">${esc(a.origin)} → ${esc(a.dest_name)}</span></div>
+      <div class="meta">${dateChip(a.depart_date, a.return_date, a.nights)}${a.airline_name ? `<span class="small muted">${esc(a.airline_name)}</span>` : ''}<span class="tiny muted">${ago(a.created_at)}</span></div></div>
+    <div class="price">${money(a.price)}${a.savings > 0.02 ? `<small style="color:var(--good);font-weight:800">−${Math.round(a.savings * 100)}%</small>` : `<small>${a.trip === 'rt' ? 'i/v' : 'ida'}</small>`}</div></div>`;
 }
 VIEWS.alerts = async (el) => {
   const alerts = await api('/api/alerts?limit=300');
   const kinds = [...new Set(alerts.map((a) => a.kind))];
-  el.innerHTML = `<div class="page-head"><div><h1>Alertas</h1><p>Todo lo que hemos detectado para ti. Configura dónde recibirlas en Ajustes → Notificaciones.</p></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Alertas</h1><p>Chollos y bajadas detectados para ti.</p></div>
     <div class="row"><button class="btn sm" id="aRead">${ic('check')} Marcar leídas</button><button class="btn sm" id="aCsv">${ic('download')} CSV</button><button class="btn sm danger" id="aClear">${ic('trash')} Borrar</button></div></div>
     <div class="chips" id="aF"><button class="chip on" data-k="">Todas (${alerts.length})</button>${kinds.map((k) => `<button class="chip" data-k="${k}">${esc((KIND[k] || [k])[0])} (${alerts.filter((a) => a.kind === k).length})</button>`).join('')}</div>
     <div class="list section" id="aList"></div>`;
@@ -616,6 +642,7 @@ VIEWS.settings = async (el) => {
       <label class="f">Pausa entre peticiones (s)${inp('request_delay_s', 'number', 'step="0.1" min="0"')}</label>
       <label class="f">Caché de búsquedas (h)${inp('search_cache_hours', 'number', 'step="0.5" min="0"')}</label>
       <label class="f">Festivos de${sel('holiday_region', Object.entries(S.meta.holiday_regions))}</label>
+      <label class="f">Descuento de residente${sel('resident_discount', [['', 'No soy residente'], ['canarias', 'Residente en Canarias (75 %)'], ['baleares', 'Residente en Baleares (75 %)']])}</label>
     </div></div>
 
     <div class="card pad section"><h2>📱 App en el móvil</h2><p class="small muted">Abre esta web en el móvil y usa «Añadir a pantalla de inicio» (Safari/Chrome): se instala como una app. Para abrirla fuera de casa, publícala online (mira DEPLOY.md).</p>

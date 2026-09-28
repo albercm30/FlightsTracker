@@ -2,36 +2,71 @@
 
 La app tiene que estar **encendida las 24 horas** para escanear precios y enviarte avisos. Tienes tres opciones.
 
-| Opción | Coste | Dificultad | ¿Hace falta tu PC encendido? |
-|---|---|---|---|
-| **A. Railway** (recomendada) | ~5 $/mes (plan Hobby) | ⭐ Fácil, desde GitHub | No |
-| **B. Tu PC + túnel** (Cloudflare o Tailscale) | Gratis | ⭐ Fácil | Sí |
-| **C. Servidor propio / VPS / Raspberry Pi** con Docker | 0–5 €/mes | ⭐⭐ Media | No |
+| Opción | Coste | Web online 24/7 | Avisos 24/7 | Dificultad |
+|---|---|---|---|---|
+| **0. GitHub Actions** (escaneos y avisos) | **Gratis** | ❌ (la web, en tu PC cuando quieras) | ✅ | ⭐ Fácil |
+| **1. Oracle Cloud Always Free** + Tailscale | **Gratis** | ✅ | ✅ | ⭐⭐ Media |
+| **2. Tu PC + túnel** (Tailscale o Cloudflare) | **Gratis** | Solo con el PC encendido | Solo con el PC encendido | ⭐ Fácil |
+| **3. Railway** | ~5 $/mes | ✅ | ✅ | ⭐ Muy fácil |
+| 4. VPS propio con Docker | 4–6 €/mes | ✅ | ✅ | ⭐⭐ Media |
+
+**Qué te recomiendo:**
+- **Gratis y sin complicarte:** la opción 0 (avisos siempre, aunque apagues el PC) junto con la opción 2 para ver la web cuando quieras.
+- **Gratis y todo online:** la opción 1.
+- **Pagando 5 $ y olvidarte:** la opción 3.
+
+> ❌ **Render (plan gratis) no sirve.** Duerme la app tras 15 minutos sin visitas, así que no hay escaneos, y no permite disco persistente, así que perderías tus datos.
 
 > 🔒 **Antes de publicarla, pon siempre una contraseña** con la variable `APP_PASSWORD`. Sin ella, cualquiera con el enlace vería tus ajustes y tus claves. Con contraseña, la app muestra una pantalla de acceso y recuerda la sesión 60 días.
 
 ---
 
-## A. Railway (recomendada)
+## 0. GitHub Actions: escaneos y avisos gratis, sin servidor
 
-Railway construye la imagen de Docker del repositorio y la deja encendida. Según su documentación, el plan Hobby cuesta 5 $/mes, incluye 5 $ de uso y permite volúmenes persistentes. Esta app consume muy poco.
+GitHub ejecuta cada 6 horas `python -m app scan` en sus máquinas y te manda los avisos por ntfy, Telegram o email. La base de datos se guarda entre ejecuciones, así que hay historial y no se repiten avisos. Es gratis en repositorios **públicos**; en privados tienes 2.000 minutos al mes, y cada escaneo suele durar pocos minutos. Tus tokens van como *secrets* y nadie puede verlos.
 
-1. Sube el proyecto a tu repositorio de GitHub (ya lo tienes).
-2. Entra en [railway.com](https://railway.com) con tu cuenta de GitHub.
-3. **New Project → Deploy from GitHub repo →** elige `FlightsTracker`.
-4. En el servicio, abre **Variables** y añade:
-   - `APP_PASSWORD` = una contraseña larga
-   - `TRUST_PROXY` = `1`
-   - `COOKIE_SECURE` = `1`
-   - `TZ` = `Atlantic/Canary` (o `Europe/Madrid`)
-   - opcionales: `TRAVELPAYOUTS_TOKEN`, `SERPAPI_KEY`, `NTFY_TOPIC`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `HOLIDAY_REGION` (`canarias`, `madrid`…)
-5. Añade un volumen para que tus datos sobrevivan a cada actualización: **clic derecho en el servicio → Attach Volume → Mount path: `/data`**.
-6. **Settings → Networking → Generate Domain**. Te dará una dirección tipo `https://flightstracker-production.up.railway.app`.
-7. Ábrela en el móvil, entra con tu contraseña y pulsa **«Añadir a pantalla de inicio»**: se instala como una app.
+**Opción rápida (recomendada):** en PowerShell, dentro de la carpeta del proyecto y después de hacer `git push`:
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\configurar-github-actions.ps1
+```
+El script instala GitHub CLI si hace falta, te pregunta tus datos, los guarda como secrets y variables, y lanza una prueba. Cada ejecución deja en **Actions** un resumen con los mejores precios.
 
-Cada vez que hagas `git push`, Railway vuelve a desplegar solo.
+**Opción manual:**
 
-## B. Gratis: tu PC encendido + un túnel
+1. En tu repositorio: **Settings → Secrets and variables → Actions**.
+2. En la pestaña **Secrets**, añade:
+   - `TRAVELPAYOUTS_TOKEN`;
+   - `NTFY_TOPIC`, o bien `TELEGRAM_BOT_TOKEN` y `TELEGRAM_CHAT_ID`.
+3. En la pestaña **Variables**, añade:
+   - `ORIGINS`, por ejemplo `TCI,LPA,MAD`;
+   - `DESTINATIONS`, por ejemplo `LON,ROM,NYC,BKK,CUN`;
+   - `ENABLE_SCHEDULED_SCAN` = `true`;
+   - opcionales: `TRIP_TYPE` (`rt`, `ow` o `both`), `MIN_NIGHTS`, `MAX_NIGHTS`, `PASSENGERS`, `BAGGAGE`, `RESIDENT_DISCOUNT` (`canarias`), `QUIET_HOURS` (`23-8`) y `TZ` (`Atlantic/Canary`).
+4. En **Actions → Escaneo programado → Run workflow** lánzalo una vez para probar. Después se ejecuta solo.
+
+Para cambiar destinos, edita la variable `DESTINATIONS`. La web la sigues usando en tu PC (`iniciar.bat`) para buscar y explorar.
+
+## 1. Oracle Cloud Always Free: todo online y gratis
+
+Oracle regala una máquina virtual ARM para siempre. Desde junio de 2026 es de **2 núcleos y 12 GB**, de sobra para esta app. Pide tarjeta para verificar tu identidad (no cobra si te quedas en el plan gratis) y a veces no hay capacidad en la región: si falla, prueba otra región o más tarde.
+
+1. Crea la cuenta en [oracle.com/cloud/free](https://www.oracle.com/cloud/free/) y lanza una instancia **Ubuntu** de tipo **VM.Standard.A1.Flex**.
+2. Entra por SSH e instala Docker y la app:
+   ```bash
+   curl -fsSL https://get.docker.com | sh
+   git clone https://github.com/albercm30/FlightsTracker.git && cd FlightsTracker
+   cp .env.example .env && nano .env      # APP_PASSWORD, TRAVELPAYOUTS_TOKEN, NTFY_TOPIC...
+   sudo docker compose up -d --build
+   ```
+3. Publica la app con HTTPS y una dirección fija sin comprar dominio, usando **Tailscale Funnel**:
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo tailscale up
+   sudo tailscale funnel --bg 8000
+   ```
+   Quedará en `https://tu-vm.tu-red.ts.net`.
+
+## 2. Gratis: tu PC encendido + un túnel
 
 La app sigue funcionando en tu ordenador y el túnel le da una dirección pública con HTTPS.
 
@@ -58,9 +93,28 @@ Aparecerá una dirección `https://algo-aleatorio.trycloudflare.com`. Para tener
 
 Si solo quieres usarla desde **tus** dispositivos, no hace falta Funnel: instala Tailscale en el móvil y entra a `http://nombre-del-pc:8000`.
 
-> ⚠️ Si el PC se apaga o se suspende, no hay escaneos ni avisos. Desactiva la suspensión, o usa la opción A o C.
+> ⚠️ Si el PC se apaga o se suspende, no hay escaneos ni avisos. Desactiva la suspensión, o usa la opción 0 para los avisos, o la 1 o la 3 para tenerlo todo online.
 
-## C. Servidor propio, VPS o Raspberry Pi (Docker)
+## 3. Railway (5 $/mes, lo más cómodo)
+
+Railway construye la imagen de Docker del repositorio y la deja encendida. Según su documentación, el plan Hobby cuesta 5 $/mes, incluye 5 $ de uso y permite volúmenes persistentes. Esta app consume muy poco.
+
+1. Sube el proyecto a tu repositorio de GitHub (ya lo tienes).
+2. Entra en [railway.com](https://railway.com) con tu cuenta de GitHub.
+3. **New Project → Deploy from GitHub repo →** elige `FlightsTracker`.
+4. En el servicio, abre **Variables** y añade:
+   - `APP_PASSWORD` = una contraseña larga
+   - `TRUST_PROXY` = `1`
+   - `COOKIE_SECURE` = `1`
+   - `TZ` = `Atlantic/Canary` (o `Europe/Madrid`)
+   - opcionales: `TRAVELPAYOUTS_TOKEN`, `SERPAPI_KEY`, `NTFY_TOPIC`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `HOLIDAY_REGION` (`canarias`, `madrid`…)
+5. Añade un volumen para que tus datos sobrevivan a cada actualización: **clic derecho en el servicio → Attach Volume → Mount path: `/data`**.
+6. **Settings → Networking → Generate Domain**. Te dará una dirección tipo `https://flightstracker-production.up.railway.app`.
+7. Ábrela en el móvil, entra con tu contraseña y pulsa **«Añadir a pantalla de inicio»**: se instala como una app.
+
+Cada vez que hagas `git push`, Railway vuelve a desplegar solo.
+
+## 4. Servidor propio, VPS o Raspberry Pi (Docker)
 
 Sirve cualquier Linux con Docker: un VPS barato, una Raspberry Pi o una máquina gratuita como Oracle Cloud Free Tier.
 
@@ -71,7 +125,7 @@ cp .env.example .env        # pon APP_PASSWORD, TRUST_PROXY=1, COOKIE_SECURE=1 y
 DOMAIN=vuelos.midominio.com docker compose --profile https up -d --build
 ```
 
-Sin dominio, `docker compose up -d --build` la deja en `http://IP:8000`. En ese caso, mejor ponle delante un túnel (opción B).
+Sin dominio, `docker compose up -d --build` la deja en `http://IP:8000`. En ese caso, mejor ponle delante un túnel (opción 2).
 
 **Actualizar:** `git pull && docker compose up -d --build`. Tus datos están en `./data/flights.db`: cópialo de vez en cuando como copia de seguridad.
 

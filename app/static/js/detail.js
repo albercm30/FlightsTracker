@@ -22,7 +22,7 @@ async function openDetail(input) {
     try {
       const cal = await api(`/api/calendar?origin=${o.origin}&destination=${o.destination}&trip=${o.trip}`);
       const q = cal.quotes.find((x) => x.depart_date === o.depart_date);
-      if (q) o = { ...q, ...o, price: q.price, median: cal.median };
+      if (q) o = { ...q, ...Object.fromEntries(Object.entries(o).filter(([, v]) => v != null)), price: q.price, median: cal.median, range: cal.range };
     } catch (e) { /* sin datos */ }
   }
   S.detail = o;
@@ -35,70 +35,66 @@ function renderDetail() {
   const nights = o.return_date ? Math.round((d8(o.return_date) - d8(o.depart_date)) / 86400000) : null;
   const lvl = LEVEL[o.level];
   const L = linksFor(o);
+  const sav = o.median ? 1 - o.price / o.median : o.savings;
   openSheet(`
-  <div class="sh-head">${flag(info.country_code)}
-    <div><h2>${esc(o.origin)} → ${esc(info.name)} <span class="muted small">(${esc(o.destination)})</span></h2>
-    <div class="small muted">${tripLabel(o.trip)} · ${esc(info.country || '')}</div></div>
-    <button class="btn icon ghost close" data-close aria-label="Cerrar">${ic('x')}</button></div>
+  <div class="hdr cover ${rg(info.region)}">${flag(info.country_code)}
+    <div class="t"><h2>${esc(o.origin)} → ${esc(info.name)}</h2><div class="sub">${tripLabel(o.trip)} · ${esc(info.country || '')}</div></div>
+    ${saveBadge(sav)}<button class="btn icon ghost close" data-close aria-label="Cerrar" style="color:#fff">${ic('x')}</button></div>
   <div class="sh-body">
-    <div class="row" style="align-items:flex-end;gap:18px">
-      <div><div class="bigprice">${money(o.price)}</div><div class="small muted">por persona · ${o.trip === 'rt' ? 'ida y vuelta' : 'solo ida'}</div></div>
-      <div class="row">${lvl ? `<span class="pill ${lvl[1]}">${lvl[0]}</span>` : ''}
-        ${o.median ? `<span class="pill ${o.price < o.median ? 'good' : 'neutral'}">${o.price < o.median ? pct(1 - o.price / o.median) : '+' + Math.round((o.price / o.median - 1) * 100) + '%'} vs. habitual ${money(o.median)}</span>` : ''}</div>
+    <div class="pricehead">
+      <div><div class="row" style="align-items:baseline"><span class="bigprice">${money(o.price)}</span><span class="muted">/persona</span>${lvl ? `<span class="pill ${lvl[1]}">${lvl[0]}</span>` : ''}</div>
+        ${o.resident_price != null ? `<div class="resident" style="margin-top:8px">🏝️ Con descuento de residente ≈ ${money(o.resident_price)}</div>` : ''}</div>
     </div>
-    <div class="info-grid">
-      <div><div class="k">Salida</div><div class="v">${esc(dlong(o.depart_date))}</div></div>
-      ${o.return_date ? `<div><div class="k">Vuelta</div><div class="v">${esc(dlong(o.return_date))}</div><div class="small muted">${nights} noches</div></div>` : ''}
-      <div><div class="k">Aerolínea</div><div class="v">${esc(o.airline_name || o.airline || '—')}</div></div>
-      <div><div class="k">Escalas</div><div class="v">${esc(stops(o.transfers)) || '—'}${o.return_date && o.return_transfers != null ? ` / ${esc(stops(o.return_transfers))}` : ''}</div></div>
-      <div><div class="k">Antelación</div><div class="v">${lead} días</div></div>
-      ${o.updated_at ? `<div><div class="k">Precio visto</div><div class="v">${ago(o.updated_at)}</div>${o.prev_price ? `<div class="small muted">antes ${money(o.prev_price)}</div>` : ''}</div>` : ''}
+    ${meter(o.price, o.range)}
+    <div class="facts">
+      <div class="fact"><span>Ida</span><b>${esc(dshort(o.depart_date))}</b></div>
+      ${o.return_date ? `<div class="fact"><span>Vuelta</span><b>${esc(dshort(o.return_date))}</b></div><div class="fact"><span>Estancia</span><b>${nights} noches</b></div>` : ''}
+      <div class="fact"><span>Escalas</span><b>${o.transfers === 0 ? '✈ Directo' : o.transfers != null ? o.transfers : '—'}${o.return_date && o.return_transfers != null ? ` / ${o.return_transfers === 0 ? 'directo' : o.return_transfers}` : ''}</b></div>
+      <div class="fact"><span>Aerolínea</span><b>${esc(o.airline_name || o.airline || '—')}</b></div>
+      <div class="fact"><span>Faltan</span><b>${lead} días</b></div>
+      ${o.updated_at ? `<div class="fact"><span>Visto</span><b>${ago(o.updated_at)}</b></div>` : ''}
     </div>
 
     <div class="card pad" style="box-shadow:none">
-      <div class="row" style="margin-bottom:10px"><h3>${ic('bag')} Equipaje y precio total</h3><span class="spacer"></span>${paxBagControl('dPaxBag', p, o.baggage?.option || S.settings.baggage)}</div>
-      <div id="bagBox" class="muted small">Calculando…</div>
+      <div class="row" style="margin-bottom:12px"><h3>🧳 Equipaje y total</h3><span class="spacer"></span>${paxBagControl('dPaxBag', p, o.baggage?.option || S.settings.baggage)}</div>
+      <div id="bagBox"><div class="skel" style="height:80px"></div></div>
     </div>
 
-    ${o.trip === 'rt' ? `<div><div class="row"><h3>Cambia las fechas</h3><span class="muted small">salida ↓ · vuelta →</span></div><div id="dGrid" class="muted small" style="margin-top:8px">Cargando cuadrícula…</div></div>` : ''}
+    ${o.trip === 'rt' ? `<div><div class="row"><h3>📆 Prueba otras fechas</h3><span class="muted small">filas: ida · columnas: vuelta</span></div><div id="dGrid" style="margin-top:8px"><div class="skel" style="height:120px"></div></div></div>` : ''}
 
-    <div><h3>Evolución del precio de este día</h3><div id="dHist" style="margin-top:8px"></div></div>
+    <div><h3>📈 Cómo ha cambiado este precio</h3><div id="dHist" style="margin-top:8px"></div></div>
 
-    <div class="row">
-      <div style="position:relative"><button class="btn primary" id="bookBtn">${ic('ext')} Reservar</button></div>
-      <input id="wTarget" type="number" min="0" placeholder="Precio objetivo ${sym()}" style="width:170px">
-      <button class="btn" id="watchBtn">${ic('eye')} Vigilar este vuelo</button>
-      <button class="btn ghost" id="shareBtn">${ic('share')} Compartir</button>
-      <button class="btn ghost" id="icsBtn">${ic('calendar')} Al calendario</button>
-    </div>
-    <div class="card pad" style="box-shadow:none">
-      <div class="row"><h3>${ic('zap')} Comprobar precio real ahora</h3><span class="spacer"></span>
-        ${S.status?.live_check ? `<select id="lcClass" style="width:auto"><option value="1">Turista</option><option value="2">Turista superior</option><option value="3">Business</option><option value="4">Primera</option></select>
-        <label class="check"><input type="checkbox" id="lcDirect"> Solo directos</label>
-        <button class="btn" id="liveBtn">Consultar Google Flights</button>` : ''}</div>
-      <div id="liveBox" class="small muted" style="margin-top:8px">${S.status?.live_check ? 'Consulta el precio en vivo, el nivel de precio de Google, su historial y las opciones de equipaje reales (gasta 1 búsqueda de SerpApi).' : 'Añade una clave gratuita de SerpApi en Ajustes para ver aquí el precio en vivo de Google Flights y su historial de precios.'}</div>
-    </div>
-    <p class="tiny muted">Precios de ${esc(o.provider === 'demo' || S.status?.provider === 'demo' ? 'simulación (modo demo)' : 'Aviasales (búsquedas recientes)')}. Pueden cambiar: confirma siempre el precio final en la web de reserva.</p>
+    <details class="card pad" style="box-shadow:none" ${S.status?.live_check ? '' : ''}>
+      <summary style="cursor:pointer;font-weight:800">⚡ Precio real ahora en Google Flights</summary>
+      <div style="margin-top:12px">${S.status?.live_check ? `<div class="row"><select id="lcClass" style="width:auto"><option value="1">Turista</option><option value="2">Turista superior</option><option value="3">Business</option><option value="4">Primera</option></select>
+        <label class="check"><input type="checkbox" id="lcDirect"> Solo directos</label><button class="btn primary sm" id="liveBtn">Consultar</button></div>` : '<p class="small muted" style="margin:0">Añade una clave gratuita de SerpApi en Ajustes para activarlo.</p>'}
+      <div id="liveBox" style="margin-top:10px"></div></div>
+    </details>
+    <p class="tiny muted" style="margin:0">${o.provider === 'demo' || S.status?.provider === 'demo' ? '🎲 Precio simulado (modo demo).' : 'Precio de búsquedas recientes: confírmalo al reservar.'}</p>
+  </div>
+  <div class="sh-foot">
+    <button class="btn primary" id="bookBtn">${ic('ext')} Reservar</button>
+    <button class="btn" id="watchBtn">${ic('eye')} Vigilar</button>
+    <input id="wTarget" type="number" min="0" placeholder="Avísame a… ${sym()}" style="width:150px">
+    <span class="spacer"></span>
+    <button class="btn icon ghost" id="shareBtn" title="Compartir">${ic('share')}</button>
+    <button class="btn icon ghost" id="icsBtn" title="Añadir al calendario">${ic('calendar')}</button>
   </div>`);
 
   // equipaje
   const updBag = async () => {
     const { pax: pp, baggage } = readPaxBag($('#dPaxBag'));
     const b = await api(`/api/baggage?airline=${encodeURIComponent(o.airline || '')}&long_haul=${o.long_haul ? 1 : 0}&option=${baggage}&legs=${o.trip === 'rt' ? 2 : 1}&pax=${pp}`);
-    const row = (k, lbl, st, rng) => `<div>${k}</div><div>${lbl}</div><div class="${st === 'included' ? 'ok' : st === 'fee' ? 'fee' : 'dep'}">${st === 'included' ? 'Incluida' : st === 'fee' ? `De pago${rng ? ` · ${rng}` : ''}` : 'Según tarifa'}</div>`;
-    const total = o.price * pp + b.fee_est;
+    const tile = (icon, nm, st) => `<div class="tile ${st === 'included' ? 'inc' : st === 'fee' ? 'fee' : 'dep'}"><span class="ico">${icon}</span><span class="nm">${nm}</span><span class="st">${st === 'included' ? '✓ Incluida' : st === 'fee' ? '€ De pago' : '? Según tarifa'}</span></div>`;
+    const base = (o.resident_price != null ? o.resident_price : o.price) * pp;
+    const total = base + b.fee_est;
+    const fw = total ? (base / total) * 100 : 100;
     $('#bagBox').className = '';
-    $('#bagBox').innerHTML = `<div class="bag-table">
-      ${row('🎒', `Artículo personal${b.personal_size ? ` (${esc(b.personal_size)})` : ''}`, 'included')}
-      ${row('🧳', 'Maleta de cabina (~10 kg)', b.cabin)}
-      ${row('🛄', 'Maleta facturada (20–23 kg)', b.checked)}
-    </div>
-    <div class="row" style="margin-top:12px;align-items:baseline">
-      <div><div class="k tiny muted">TOTAL ESTIMADO (${pp} ${pp > 1 ? 'personas' : 'persona'}${baggage !== 'personal' ? ', con equipaje' : ''})</div>
-      <div style="font-size:1.6rem;font-weight:850">${money(total)}</div></div>
-      <div class="small muted">${money(o.price)} × ${pp}${b.fee_max ? ` + equipaje ${money(b.fee_min)}–${money(b.fee_max)} (≈ ${money(b.fee_est)})` : ''}</div>
-    </div>
-    <p class="tiny muted" style="margin:8px 0 0">Estimación según la política habitual de ${esc(b.airline)}${b.known ? '' : ' (aerolínea sin datos: valores típicos)'}. Añadirlo al reservar suele ser más barato que en el aeropuerto. La norma UE de maleta de cabina incluida aún no está en vigor.</p>`;
+    $('#bagBox').innerHTML = `<div class="tiles">${tile('🎒', 'Mochila', 'included')}${tile('🧳', 'Cabina 10 kg', b.cabin)}${tile('🛄', 'Facturada 23 kg', b.checked)}</div>
+      <div class="row" style="margin-top:14px;align-items:flex-end"><div><div class="tiny muted" style="font-weight:800">TOTAL ESTIMADO · ${pp} ${pp > 1 ? 'personas' : 'persona'}</div><div style="font-size:1.9rem;font-weight:900;letter-spacing:-.03em">${money(total)}</div></div>
+        <span class="spacer"></span><div class="small muted" style="text-align:right">billetes ${money(base)}<br>equipaje ${b.fee_max ? `≈ ${money(b.fee_est)}` : '0 €'}</div></div>
+      <div class="stack"><i class="fare" style="width:${fw}%"></i><i class="bags" style="width:${100 - fw}%"></i></div>
+      <div class="stack-legend"><span><i style="background:var(--series-1)"></i>billetes</span><span><i style="background:#eda100"></i>equipaje (${esc(b.airline)}${b.known ? '' : ', típico'})</span><span title="Estimación según la política habitual de la aerolínea. La norma UE de cabina incluida aún no se aplica.">ⓘ estimación</span></div>`;
     S.detail.pax = pp;
   };
   $('#dPaxBag').addEventListener('change', updBag);
@@ -141,12 +137,8 @@ function renderDetail() {
   // acciones
   $('#bookBtn').onclick = (e) => {
     e.stopPropagation();
-    const old = $('#bookMenu'); if (old) { old.remove(); return; }
-    const m = document.createElement('div'); m.className = 'menu'; m.id = 'bookMenu'; m.style.bottom = '48px';
-    m.innerHTML = [['Aviasales', L.aviasales], ['Skyscanner', L.skyscanner], ['Google Flights', L.google], ['Kayak', L.kayak]]
-      .map(([n, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener">${ic('ext')} ${n}</a>`).join('');
-    e.target.closest('div').appendChild(m);
-    setTimeout(() => document.addEventListener('click', () => m.remove(), { once: true }));
+    popMenu(e.currentTarget, [['Aviasales', L.aviasales], ['Skyscanner', L.skyscanner], ['Google Flights', L.google], ['Kayak', L.kayak]]
+      .map(([n, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener">${ic('ext')} ${n}</a>`).join(''));
   };
   $('#watchBtn').onclick = async () => {
     try {
@@ -159,14 +151,14 @@ function renderDetail() {
     icsEvent({ title: `✈️ ${o.origin} → ${info.name}`, start: o.depart_date, end: o.return_date, desc: `Precio visto: ${money(o.price)} por persona\nReservar: ${L.aviasales}`, url: L.google }), 'text/calendar');
   const lb = $('#liveBtn');
   if (lb) lb.onclick = async () => {
-    lb.disabled = true; $('#liveBox').innerHTML = '<div class="progress"><div style="width:60%"></div></div>';
+    lb.disabled = true; $('#liveBox').innerHTML = '<div class="skel" style="height:60px"></div>';
     try {
       const { pax: pp, baggage } = readPaxBag($('#dPaxBag'));
       const r = await api('/api/live-check', { method: 'POST', body: { origin: o.origin, destination: o.destination, date: o.depart_date, return_date: o.return_date, pax: pp, baggage, travel_class: $('#lcClass').value, direct_only: $('#lcDirect').checked } });
       const lv = { low: ['bajo', 'good'], typical: ['normal', 'warn'], high: ['alto', 'bad'] }[r.price_level] || [r.price_level || '—', 'neutral'];
       $('#liveBox').innerHTML = `<div class="row"><div class="bigprice" style="font-size:2rem">${money(r.lowest_price)}</div><span class="pill ${lv[1]}">Google: precio ${esc(lv[0])}</span>
         ${r.typical_range ? `<span class="small muted">Rango habitual ${money(r.typical_range[0])} – ${money(r.typical_range[1])}</span>` : ''}</div>
-        ${r.advice ? `<div class="verdict ${r.advice.level}" style="margin-top:10px">${esc(r.advice.verdict)}</div><ul class="reasons">${r.advice.reasons.map((x) => `<li>${esc(x)}</li>`).join('')}</ul>` : ''}
+        ${r.advice ? `<div style="margin-top:12px">${verdictBox(r.advice)}</div>` : ''}
         ${r.history.length ? '<h3 style="margin-top:12px">Historial de Google Flights</h3><div id="gHist"></div>' : ''}
         <div class="table-wrap" style="margin-top:12px"><table><tr><th>Precio</th><th>Aerolínea</th><th>Escalas</th><th>Salida</th><th>Duración</th><th>Detalles</th></tr>
         ${r.flights.map((f) => `<tr><td><b>${money(f.price)}</b></td><td>${esc(f.airlines.join(', '))}</td><td>${f.stops || 'Directo'}</td><td>${esc((f.departure || '').slice(-5))}</td><td>${f.duration_min ? Math.floor(f.duration_min / 60) + 'h ' + (f.duration_min % 60) + 'm' : ''}</td><td class="tiny">${esc((f.extensions || []).join(' · '))}</td></tr>`).join('')}</table></div>

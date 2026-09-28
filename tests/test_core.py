@@ -264,6 +264,41 @@ class AuthAndMigrationTest(unittest.TestCase):
             self.assertIn("trip", {r["name"] for r in db.rows("PRAGMA table_info(quotes)")})
 
 
+class ExtrasTest(unittest.TestCase):
+    def test_resident_price(self):
+        self.assertIsNone(tracker.resident_price(100, "TCI", "LON", 1, "canarias"))
+        self.assertIsNone(tracker.resident_price(100, "TCI", "MAD", 1, ""))
+        self.assertEqual(tracker.resident_price(100, "TCI", "MAD", 1, "canarias"), 34)   # (100-12)*0.25+12
+        self.assertEqual(tracker.resident_price(200, "MAD", "PMI", 2, "baleares"), 68)   # (200-24)*0.25+24
+
+    def test_env_config_and_scan_cli(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"ORIGINS": "TCI", "DESTINATIONS": "MAD,LIS", "TRIP_TYPE": "ow", "PRICE_PROVIDER": "demo",
+                   "MIN_NIGHTS": "2"}
+            old = {k: os.environ.get(k) for k in env}
+            os.environ.update(env)
+            try:
+                db.init(os.path.join(tmp, "e.db"))
+                db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('ROM','Roma',1,'x')")
+                db.apply_env_config()
+                s = db.get_settings()
+                self.assertEqual((s["origins"], s["trip_type"], s["min_nights"]), (["TCI"], "ow", 2))
+                enabled = {r["code"] for r in db.rows("SELECT code FROM destinations WHERE enabled=1")}
+                self.assertEqual(enabled, {"MAD", "LIS"})
+            finally:
+                for k, v in old.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+
+    def test_advice_short(self):
+        a = tracker.advice(50, (date.today() + timedelta(days=40)).isoformat(), "MAD", "LON", [50, 60, 70, 80, 90])
+        self.assertIn(a["level"], ("buy", "good"))
+        self.assertTrue(1 <= a["score"] <= 99)
+        self.assertTrue(all(len(p["t"]) < 60 for p in a["points"]))
+
+
 class NotifierTest(unittest.TestCase):
     def test_digest_telegram_and_ntfy(self):
         from unittest import mock

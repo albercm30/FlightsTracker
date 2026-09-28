@@ -101,6 +101,8 @@ def send_digest(alerts, settings=None) -> dict:
     top = _sorted(alerts)[: int(s.get("notify_max_items", 10))]
     rest = len(alerts) - len(top)
     title = f"✈️ {len(alerts)} oferta(s) de vuelos"
+    if s.get("provider") == "demo":
+        title = "[DEMO · precios simulados] " + title
 
     tg_lines = [f"<b>{html.escape(title)}</b>", ""]
     txt_lines = []

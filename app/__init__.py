@@ -294,6 +294,7 @@ def create_app(db_path: str = None, start_scheduler: bool = None) -> Flask:
             tracker.enrich(q, pax, bag, cur)
             q["level"] = tracker.price_level(q["price"], prices)
         return jsonify({"origin": catalog.info(origin), "destination": catalog.info(dest), "trip": trip,
+                        "range": [min(prices), statistics.median(prices), max(prices)] if prices else None,
                         "quotes": qs, "median": statistics.median(prices) if prices else None,
                         "min": min(prices) if prices else None, "max": max(prices) if prices else None})
 
@@ -490,8 +491,12 @@ def create_app(db_path: str = None, start_scheduler: bool = None) -> Flask:
         for a in rows:
             a["links"] = booking_links(a["origin"], a["destination"], a["depart_date"], a.get("return_date"))
             a["kind_label"] = tracker.KIND_LABELS.get(a["kind"], a["kind"])
-            a["dest_name"] = catalog.info(a["destination"])["name"]
-            a["dest_cc"] = catalog.info(a["destination"]).get("country_code", "")
+            info = catalog.info(a["destination"])
+            a["dest_name"], a["dest_cc"], a["dest_region"] = info["name"], info.get("country_code", ""), info.get("region")
+            a["airline_name"] = airlines.name(a.get("airline")) if a.get("airline") else ""
+            a["savings"] = (1 - a["price"] / a["ref_price"]) if a.get("ref_price") else 0
+            if a.get("return_date"):
+                a["nights"] = (date.fromisoformat(a["return_date"]) - date.fromisoformat(a["depart_date"])).days
         return jsonify(rows)
 
     @app.post("/api/alerts/read")

@@ -108,6 +108,7 @@ function openSheet(html, onClose) {
 }
 function closeSheet() {
   $('#modal').classList.add('hidden'); document.body.style.overflow = '';
+  closeMenus();
   if (openSheet._onClose) openSheet._onClose();
 }
 $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal' || e.target.closest('[data-close]')) closeSheet(); });
@@ -166,7 +167,7 @@ function chart(el, series, { height = 220, bars = false, yFmt = money, xFmt = (x
     tip.innerHTML = `<div class="tiny" style="opacity:.8">${esc(xFmt(x, true))}</div>${rows.join('<br>')}`;
     tip.classList.remove('hidden');
     const p0 = series[0].data.find((q) => q.x === x);
-    tip.style.left = `${(X(x) / W) * r.width}px`; tip.style.top = `${((p0 ? Y(p0.y) : T) / H) * r.height}px`;
+    const tl = (X(x) / W) * r.width, tw = tip.offsetWidth || 120; tip.style.left = `${Math.max(tw / 2, Math.min(r.width - tw / 2, tl))}px`; tip.style.top = `${((p0 ? Y(p0.y) : T) / H) * r.height}px`;
     xh.setAttribute('x1', X(x)); xh.setAttribute('x2', X(x)); xh.setAttribute('visibility', 'visible');
   });
   svg.addEventListener('mouseleave', () => { tip.classList.add('hidden'); xh.setAttribute('visibility', 'hidden'); });
@@ -181,36 +182,74 @@ function sparkline(values, w = 220, h = 28) {
   return `<svg class="spark" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none" aria-hidden="true"><polyline points="${pts.join(' ')}" style="fill:none;stroke:var(--series-1)" stroke-width="1.6"/><circle cx="${mx}" cy="${my}" r="3" style="fill:var(--series-1)"/></svg>`;
 }
 
+/* ---------- capas flotantes (se pintan sobre todo, nunca quedan tapadas) ---------- */
+function floatAt(el, anchor, { width = null, align = 'left' } = {}) {
+  const place = () => {
+    if (!document.body.contains(anchor)) { el.remove(); return; }
+    const r = anchor.getBoundingClientRect(), vh = window.innerHeight, vw = window.innerWidth;
+    const w = width || Math.max(r.width, 260);
+    el.style.width = `${Math.min(w, vw - 16)}px`;
+    let left = align === 'right' ? r.right - Math.min(w, vw - 16) : r.left;
+    left = Math.max(8, Math.min(left, vw - Math.min(w, vw - 16) - 8));
+    el.style.left = `${left}px`;
+    const below = vh - r.bottom - 8, above = r.top - 8;
+    const h = Math.min(el.scrollHeight, 340);
+    if (below < h && above > below) { el.style.top = ''; el.style.bottom = `${vh - r.top + 4}px`; el.style.maxHeight = `${Math.min(340, above)}px`; }
+    else { el.style.bottom = ''; el.style.top = `${r.bottom + 4}px`; el.style.maxHeight = `${Math.max(160, Math.min(340, below))}px`; }
+  };
+  el.classList.add('floating'); document.body.appendChild(el); place();
+  const onMove = () => place();
+  window.addEventListener('scroll', onMove, true); window.addEventListener('resize', onMove);
+  el._cleanup = () => { window.removeEventListener('scroll', onMove, true); window.removeEventListener('resize', onMove); el.remove(); };
+  return el;
+}
+function popMenu(anchor, html) {
+  closeMenus();
+  const m = document.createElement('div'); m.className = 'menu'; m.innerHTML = html;
+  floatAt(m, anchor, { width: 230 });
+  setTimeout(() => document.addEventListener('click', closeMenus, { once: true }));
+  return m;
+}
+function closeMenus() { $$('.menu.floating').forEach((m) => (m._cleanup ? m._cleanup() : m.remove())); }
+
 /* ---------- autocompletar ciudades/países ---------- */
 function attachAC(input, { countries = true, anywhere = false, onPick } = {}) {
-  const wrap = input.parentElement; wrap.classList.add('ac');
   let list = null, items = [], idx = -1;
-  const close = () => { list?.remove(); list = null; idx = -1; };
+  const close = () => { if (list) { list._cleanup(); list = null; } idx = -1; };
   const render = () => {
     const q = input.value.trim().toLowerCase();
     items = [];
-    if (anywhere && (!q || 'cualquier destino'.includes(q))) items.push({ type: 'any', label: '🌍 Cualquier destino', value: 'Cualquier destino' });
-    const cities = S.catalog.filter((c) => !q || c.code.toLowerCase() === q || c.name.toLowerCase().includes(q) || c.country.toLowerCase().includes(q)).slice(0, 8);
-    cities.forEach((c) => items.push({ type: 'city', c, label: `${c.name}`, sub: c.country, value: `${c.name} (${c.code})` }));
-    if (countries) S.countries.filter((c) => q && c.country.toLowerCase().includes(q)).slice(0, 4)
-      .forEach((c) => items.push({ type: 'country', cc: c.country_code, label: `${c.country} — todo el país`, sub: `${c.count} ciudades`, value: `${c.country} (país)` }));
+    if (anywhere && (!q || 'cualquier destino'.includes(q))) items.push({ type: 'any', label: '🌍 Cualquier destino', sub: 'Explorar todo', value: 'Cualquier destino' });
+    const norm = (t) => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    const nq = norm(q);
+    const score = (c) => { const n = norm(c.name), k = c.code.toLowerCase(), co = norm(c.country);
+      if (k === nq) return 0; if (n.startsWith(nq)) return 1; if (co.startsWith(nq)) return 2; if (n.split(/[\s(]+/).some((w) => w.startsWith(nq))) return 3; if (n.includes(nq)) return 4; if (co.includes(nq)) return 5; return 9; };
+    const cities = (q ? S.catalog.map((c) => [score(c), c]).filter(([sc]) => sc < 9).sort((a, b) => a[0] - b[0]).map(([, c]) => c) : S.catalog).slice(0, 8);
+    cities.forEach((c) => items.push({ type: 'city', c, label: c.name, sub: c.country, value: `${c.name} (${c.code})` }));
+    if (countries) S.countries.filter((c) => q && norm(c.country).includes(nq)).slice(0, 4)
+      .forEach((c) => items.push({ type: 'country', cc: c.country_code, label: `${c.country} · todo el país`, sub: `${c.count} ciudades`, value: `${c.country} (país)` }));
     if (/^[a-z]{3}$/i.test(q) && !cities.some((c) => c.code.toLowerCase() === q)) items.push({ type: 'code', label: `Usar código ${q.toUpperCase()}`, value: q.toUpperCase() });
     if (!items.length) return close();
-    if (!list) { list = document.createElement('div'); list.className = 'ac-list'; wrap.appendChild(list); }
-    list.innerHTML = items.map((it, i) => `<div data-i="${i}" class="${i === idx ? 'on' : ''}">${it.type === 'city' ? flag(it.c.country_code) : it.type === 'country' ? flag(it.cc) : ''}<span>${esc(it.label)}${it.sub ? ` <span class="muted small">· ${esc(it.sub)}</span>` : ''}</span>${it.c ? `<span class="code">${it.c.code}</span>` : ''}</div>`).join('');
+    const html = items.map((it, i) => `<div data-i="${i}" class="${i === idx ? 'on' : ''}">${it.type === 'city' ? flag(it.c.country_code) : it.type === 'country' ? flag(it.cc) : '<span class="flag">✈</span>'}<span class="lbl"><b>${esc(it.label)}</b>${it.sub ? `<span class="muted"> · ${esc(it.sub)}</span>` : ''}</span>${it.c ? `<span class="code">${it.c.code}</span>` : ''}</div>`).join('');
+    if (!list) {
+      list = document.createElement('div'); list.className = 'ac-list'; list.innerHTML = html;
+      list.addEventListener('mousedown', (e) => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); pick(+d.dataset.i); } });
+      floatAt(list, input);
+    } else { list.innerHTML = html; }
+    const on = $('.on', list); if (on) on.scrollIntoView({ block: 'nearest' });
   };
   const pick = (i) => { const it = items[i]; if (!it) return; input.value = it.value; close(); onPick && onPick(it); input.dispatchEvent(new Event('change')); };
+  input.setAttribute('autocomplete', 'off');
   input.addEventListener('input', () => { idx = -1; render(); });
-  input.addEventListener('focus', render);
+  input.addEventListener('focus', () => { input.select(); render(); });
   input.addEventListener('keydown', (e) => {
     if (!list) return;
     if (e.key === 'ArrowDown') { idx = Math.min(items.length - 1, idx + 1); render(); e.preventDefault(); }
     else if (e.key === 'ArrowUp') { idx = Math.max(0, idx - 1); render(); e.preventDefault(); }
-    else if (e.key === 'Enter' && idx >= 0) { pick(idx); e.preventDefault(); }
+    else if (e.key === 'Enter') { pick(idx >= 0 ? idx : 0); e.preventDefault(); }
     else if (e.key === 'Escape') close();
   });
-  wrap.addEventListener('mousedown', (e) => { const d = e.target.closest('[data-i]'); if (d) { e.preventDefault(); pick(+d.dataset.i); } });
-  input.addEventListener('blur', () => setTimeout(close, 120));
+  input.addEventListener('blur', () => setTimeout(close, 150));
 }
 function resolvePlace(text) {
   const t = (text || '').trim();
@@ -281,3 +320,54 @@ document.addEventListener('click', (e) => {
   const v = $('[data-paxv]', b.parentElement); v.textContent = Math.max(1, Math.min(9, +v.textContent + +b.dataset.pax));
   v.dispatchEvent(new Event('change', { bubbles: true }));
 });
+
+/* ---------- piezas visuales ---------- */
+const REGION_NAMES = { EU: 'Europa', AF: 'África', ME: 'Oriente Medio', NA: 'Norteamérica', LA: 'Latinoamérica', AS: 'Asia', OC: 'Oceanía' };
+const rg = (region) => `rg-${region || 'EU'}`;
+function meter(price, range, { labels = true } = {}) {
+  if (!range || range[2] <= range[0]) return '';
+  const [lo, med, hi] = range;
+  const pos = Math.max(0, Math.min(100, ((price - lo) / (hi - lo)) * 100));
+  const mpos = Math.max(0, Math.min(100, ((med - lo) / (hi - lo)) * 100));
+  return `<div class="meter" title="Mínimo ${money(lo)} · habitual ${money(med)} · máximo ${money(hi)}">
+    <div class="bar"><i class="med" style="left:${mpos}%"></i><i class="dot" style="left:${pos}%"></i></div>
+    ${labels ? `<div class="lbls"><span>${money(lo)}</span><span>habitual ${money(med)}</span><span>${money(hi)}</span></div>` : ''}</div>`;
+}
+function bagChips(b) {
+  if (!b) return '';
+  const c = (st, icon, name) => `<span class="bchip ${st === 'included' ? 'inc' : st === 'fee' ? 'fee' : 'dep'}" title="${name}: ${st === 'included' ? 'incluida' : st === 'fee' ? 'de pago' : 'según tarifa'}">${icon}${st === 'included' ? '✓' : st === 'fee' ? '€' : '?'}</span>`;
+  return `<span class="bchips">${c('included', '🎒', 'Mochila')}${c(b.cabin, '🧳', 'Maleta de cabina')}${c(b.checked, '🛄', 'Maleta facturada')}</span>`;
+}
+function dateChip(d, r, n) {
+  return `<span class="datechip">📅 ${esc(dshort(d))}${r ? ` <b>→</b> ${esc(dshort(r))} <em>${n ?? ''}${n != null ? 'n' : ''}</em>` : ''}</span>`;
+}
+function saveBadge(s) { if (!s || s < 0.05) return ''; return `<span class="savebadge ${s >= 0.3 ? 'big' : ''}">−${Math.round(s * 100)}%</span>`; }
+function scoreRing(score, level, size = 84) {
+  const r = size / 2 - 7, c = 2 * Math.PI * r, v = Math.max(0, Math.min(100, score || 0));
+  const col = { buy: 'var(--good)', good: 'var(--good)', watch: 'var(--warn)', wait: 'var(--bad)' }[level] || 'var(--brand)';
+  return `<svg class="ring" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="Puntuación ${v} de 100">
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" style="fill:none;stroke:var(--surface-3)" stroke-width="7"/>
+    <circle cx="${size / 2}" cy="${size / 2}" r="${r}" style="fill:none;stroke:${col}" stroke-width="7" stroke-linecap="round"
+      stroke-dasharray="${(c * v) / 100} ${c}" transform="rotate(-90 ${size / 2} ${size / 2})"/>
+    <text x="50%" y="50%" dominant-baseline="central" text-anchor="middle" style="fill:var(--ink);font-weight:900;font-size:${size / 3.4}px">${v}</text></svg>`;
+}
+function pointsList(points) {
+  return `<ul class="points">${(points || []).map((p) => `<li class="${p.tone}"><i>${p.tone === 'good' ? '✓' : p.tone === 'bad' ? '!' : 'i'}</i>${esc(p.t)}</li>`).join('')}</ul>`;
+}
+function verdictBox(a) {
+  if (!a) return '';
+  return `<div class="verdictbox ${a.level}">${scoreRing(a.score, a.level)}<div><div class="vt">${a.level === 'buy' ? '🔥' : a.level === 'good' ? '👍' : a.level === 'watch' ? '👀' : '⏳'} ${esc(a.verdict)}</div><div class="tiny muted">Puntuación del chollo</div></div></div>${pointsList(a.points)}`;
+}
+function weekStrip(start, end, holidays) {
+  const out = []; let d = start;
+  const hs = new Set(holidays || []);
+  const from = addDays(start, -1), to = addDays(end, 1);
+  d = from;
+  while (d <= to) {
+    const wd = d8(d).getDay(), inside = d >= start && d <= end;
+    const cls = !inside ? 'out' : hs.has(d) ? 'hol' : (wd === 0 || wd === 6) ? 'we' : 'off';
+    out.push(`<span class="${cls}" title="${esc(dlong(d))}"><b>${['D', 'L', 'M', 'X', 'J', 'V', 'S'][wd]}</b>${d8(d).getDate()}</span>`);
+    d = addDays(d, 1);
+  }
+  return `<div class="wk">${out.join('')}</div>`;
+}

@@ -116,6 +116,35 @@ def cached_fetch(provider, origin, dest, month, ttl_hours, **kw):
 
 # ---------------------------------------------------------------------------
 # enriquecer un resultado con equipaje, total, enlaces...
+RESIDENT_AIRPORTS = {"canarias": {"LPA", "TCI", "ACE", "FUE", "SPC", "VDE", "GMZ"}, "baleares": {"PMI", "IBZ", "MAH"}}
+TAX_PER_LEG = 12  # tasas aproximadas por trayecto nacional (no bonificables)
+
+
+def resident_price(price: float, origin: str, dest: str, legs: int, region: str):
+    """Descuento de residente (75 % sobre la tarifa, no sobre tasas) en vuelos nacionales
+    con origen o destino en tu comunidad. Estimación: el precio real lo da la aerolínea."""
+    airports = RESIDENT_AIRPORTS.get(region or "")
+    if not airports:
+        return None
+    oi, di = catalog.info(origin), catalog.info(dest)
+    if oi.get("country_code") != "ES" or di.get("country_code") != "ES":
+        return None
+    if origin.upper() not in airports and dest.upper() not in airports:
+        return None
+    taxes = min(price * 0.5, TAX_PER_LEG * legs)
+    return round((price - taxes) * 0.25 + taxes)
+
+
+_resident_region = {"v": None, "t": 0}
+
+
+def _resident_setting():
+    now = time.time()
+    if now - _resident_region["t"] > 30:
+        _resident_region.update(v=db.get_settings().get("resident_discount", ""), t=now)
+    return _resident_region["v"]
+
+
 def enrich(r: dict, pax: int = 1, bag: str = "personal", currency: str = "eur") -> dict:
     trip = r.get("trip") or ("rt" if r.get("return_date") else "ow")
     long_haul = catalog.is_long_haul(r["origin"], r["destination"])
@@ -124,14 +153,18 @@ def enrich(r: dict, pax: int = 1, bag: str = "personal", currency: str = "eur") 
     r["airline_name"] = airlines.name(r.get("airline"))
     r["baggage"] = b
     r["pax"] = pax
-    r["price_total"] = round(r["price"] * pax + b["fee_est"])
-    r["price_pp_bags"] = round(r["price"] + b["fee_est"] / max(1, pax))
+    res = resident_price(r["price"], r["origin"], r["destination"], 2 if trip == "rt" else 1, _resident_setting())
+    r["resident_price"] = res
+    base = res if res is not None else r["price"]
+    r["price_total"] = round(base * pax + b["fee_est"])
+    r["price_pp_bags"] = round(base + b["fee_est"] / max(1, pax))
     r["date_label"] = fmt_date(r["depart_date"])
     if r.get("return_date"):
         r["return_label"] = fmt_date(r["return_date"])
         r["nights"] = (date.fromisoformat(r["return_date"]) - date.fromisoformat(r["depart_date"])).days
     info = catalog.info(r["destination"])
     r["dest_name"], r["dest_country"], r["dest_cc"] = info["name"], info["country"], info.get("country_code", "")
+    r["dest_region"] = info.get("region", "EU")
     r["origin_name"] = catalog.info(r["origin"])["name"]
     r["links"] = booking_links(r["origin"], r["destination"], r["depart_date"], r.get("return_date"), pax)
     r["long_haul"] = long_haul
@@ -504,6 +537,7 @@ def current_deals(limit: int = 30, today: date = None, trip: str = None):
                 spark[m] = min(spark.get(m, q["price"]), q["price"])
         out.append({**best, "name": dest["name"], "country": dest["country"], "max_price": dest["max_price"],
                     "median": median, "savings": (1 - best["price"] / median) if median else 0,
+                    "range": [min(route_prices), median, max(route_prices)] if route_prices else None,
                     "spark": [spark[k] for k in sorted(spark)]})
     out.sort(key=lambda x: -x["savings"])
     return out[:limit]
@@ -527,60 +561,64 @@ def recent_changes(limit: int = 50, min_pct: float = 5.0, favorites_only: bool =
 # consejo "¿compro ya o espero?"
 def advice(price: float, depart_date: str, origin: str, dest: str, route_prices, today: date = None,
            history=None, google=None) -> dict:
+    """Veredicto corto + puntuación 0-100 + motivos breves con tono (good/bad/info)."""
     today = today or date.today()
     lead = (date.fromisoformat(depart_date) - today).days
     long_haul = catalog.is_long_haul(origin, dest)
     lo, hi = (60, 170) if long_haul else (21, 90)
     route_prices = sorted(route_prices or [])
     pct_rank = (sum(1 for p in route_prices if p < price) / len(route_prices)) if route_prices else None
-    reasons, score = [], 0
+    points, score = [], 0
+    add = lambda t, tone: points.append({"t": t, "tone": tone})  # noqa: E731
     if pct_rank is not None:
         if pct_rank <= 0.05:
             score += 3
-            reasons.append("Está entre el 5 % de opciones más baratas del periodo.")
+            add("Top 5 % más barato del periodo", "good")
         elif pct_rank <= 0.2:
             score += 2
-            reasons.append("Está entre el 20 % de opciones más baratas del periodo.")
+            add("Top 20 % más barato del periodo", "good")
         elif pct_rank <= 0.5:
             score += 1
-            reasons.append("Precio por debajo de la mitad de las opciones del periodo.")
+            add("Más barato que la mitad de fechas", "good")
         else:
             score -= 1
-            reasons.append("Hay bastantes fechas más baratas: mira el calendario.")
+            add("Hay fechas más baratas", "bad")
     if history:
         if price <= min(h["price"] for h in history):
             score += 2
-            reasons.append("Es el precio más bajo que hemos registrado para esta fecha.")
+            add("Mínimo registrado para esta fecha", "good")
         if len(history) >= 2:
-            reasons.append("Ojo: el último cambio para esta fecha fue una subida." if history[-1]["price"] > history[-2]["price"]
-                           else "La última variación para esta fecha fue una bajada.")
+            up = history[-1]["price"] > history[-2]["price"]
+            add("Último cambio: subida" if up else "Último cambio: bajada", "bad" if up else "good")
     if google and google.get("price_level"):
         lvl = google["price_level"]
         rng = google.get("typical_range")
         txt = {"low": "bajo", "typical": "normal", "high": "alto"}.get(lvl, lvl)
-        reasons.append(f"Google Flights considera el precio actual {txt}"
-                       + (f" (rango habitual {rng[0]}–{rng[1]})." if rng else "."))
+        add(f"Google: precio {txt}" + (f" (habitual {rng[0]}–{rng[1]})" if rng else ""),
+            {"low": "good", "high": "bad"}.get(lvl, "info"))
         score += {"low": 2, "typical": 0, "high": -2}.get(lvl, 0)
     if lead < 21:
         score += 1
-        reasons.append("Quedan menos de 3 semanas: los precios suelen subir a partir de ahora.")
+        add("Faltan menos de 3 semanas: suele subir", "info")
     elif lead < lo:
-        reasons.append("Ya estás en la recta final: esperar suele salir más caro.")
+        add("Recta final: esperar suele salir caro", "info")
     elif lead <= hi:
-        reasons.append(f"Estás en la ventana en la que suele haber buenos precios ({lo}–{hi} días antes).")
+        add(f"Buena ventana de compra ({lo}–{hi} días antes)", "good")
     else:
         score -= 1
-        reasons.append(f"Aún falta mucho ({lead} días): suele haber precios parecidos o mejores entre {lo} y {hi} "
-                       "días antes. Vigílalo y te avisamos.")
+        add(f"Aún es pronto: mejor entre {lo} y {hi} días antes", "info")
     if score >= 3:
-        verdict, level = "¡Compra ya! Precio excelente", "buy"
+        verdict, level = "¡Cómpralo ya!", "buy"
     elif score >= 1:
-        verdict, level = "Buen precio: buena opción para reservar", "good"
+        verdict, level = "Buen precio", "good"
     elif score >= 0:
-        verdict, level = "Precio normal: puedes vigilarlo", "watch"
+        verdict, level = "Precio normal", "watch"
     else:
-        verdict, level = "Caro: espera o cambia de fecha", "wait"
-    return {"verdict": verdict, "level": level, "reasons": reasons, "lead_days": lead,
+        verdict, level = "Caro: mejor espera", "wait"
+    base = (1 - pct_rank) * 100 if pct_rank is not None else 50
+    deal_score = max(1, min(99, round(base * 0.75 + (score + 2) * 5)))
+    return {"verdict": verdict, "level": level, "score": deal_score, "points": points,
+            "reasons": [p["t"] for p in points], "lead_days": lead,
             "percentile": round(pct_rank * 100) if pct_rank is not None else None,
             "window": [lo, hi], "long_haul": long_haul}
 
@@ -743,6 +781,12 @@ def search(params: dict, job: dict = None, provider=None, today: date = None) ->
             by_dest[o["destination"]] = dict(o, options=1)
         else:
             cur["options"] += 1
+    ranges = {}
+    for o in opts:
+        ranges.setdefault(o["destination"], []).append(o["price"])
+    ranges = {k: [min(v), statistics.median(v), max(v)] for k, v in ranges.items()}
+    for o in list(opts) + list(by_dest.values()):
+        o["range"] = ranges.get(o["destination"])
     dest_list = sorted(by_dest.values(), key=lambda r: r[key])
     for r in dest_list:
         c = catalog.COORDS.get(r["destination"])

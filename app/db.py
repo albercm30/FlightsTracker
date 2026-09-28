@@ -141,6 +141,7 @@ DEFAULT_SETTINGS = {
     "watch_change_pct": 3,
     "search_cache_hours": 3,
     "holiday_region": "",
+    "resident_discount": "",       # "" | canarias | baleares  (75 % en vuelos nacionales)
     "quiet_hours": "",             # p. ej. "23-8": sin avisos por la noche (se envían después)
     "timezone": "Europe/Madrid",
     "telegram_bot_token": "",
@@ -172,6 +173,17 @@ ENV_MAP = {
     "provider": "PRICE_PROVIDER",
     "holiday_region": "HOLIDAY_REGION",
     "timezone": "TZ",
+    "resident_discount": "RESIDENT_DISCOUNT",
+    "trip_type": "TRIP_TYPE",
+    "min_nights": "MIN_NIGHTS",
+    "max_nights": "MAX_NIGHTS",
+    "passengers": "PASSENGERS",
+    "baggage": "BAGGAGE",
+    "quiet_hours": "QUIET_HOURS",
+    "months_ahead": "MONTHS_AHEAD",
+    "direct_only": "DIRECT_ONLY",
+    "deal_pct": "DEAL_PCT",
+    "min_days_ahead": "MIN_DAYS_AHEAD",
 }
 
 SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password"}
@@ -180,6 +192,7 @@ CHOICES = {
     "baggage": {"personal", "cabin", "checked", "cabin_checked"},
     "provider": {"auto", "travelpayouts", "demo"},
     "currency": {"eur", "usd", "gbp"},
+    "resident_discount": {"", "canarias", "baleares"},
 }
 
 
@@ -285,6 +298,26 @@ def execute(sql, params=()):
     with connect() as c:
         cur = c.execute(sql, params)
         return cur.lastrowid
+
+
+def apply_env_config():
+    """Modo «configuración por variables de entorno» (p. ej. GitHub Actions): aplica en cada
+    arranque los ajustes definidos en el entorno y sincroniza DESTINATIONS con la lista."""
+    vals = {k: os.environ[e] for k, e in ENV_MAP.items() if os.environ.get(e)}
+    if os.environ.get("ORIGINS"):
+        vals["origins"] = os.environ["ORIGINS"]
+    if vals:
+        update_settings(vals)
+    codes = [c.strip().upper() for c in os.environ.get("DESTINATIONS", "").split(",") if c.strip()]
+    if codes:
+        from . import catalog
+        with connect() as c:
+            for code in codes:
+                info = catalog.info(code)
+                c.execute("INSERT OR IGNORE INTO destinations(code, name, country, enabled, created_at) "
+                          "VALUES (?,?,?,1,?)", (code, info["name"], info["country"], now_iso()))
+            c.execute(f"UPDATE destinations SET enabled = CASE WHEN code IN ({','.join('?' * len(codes))}) "
+                      "THEN 1 ELSE 0 END", codes)
 
 
 def secret_key() -> str:

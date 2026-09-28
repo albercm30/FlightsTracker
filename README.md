@@ -7,6 +7,7 @@ Tu buscador y vigilante de vuelos **personal**. Le dices desde dónde sales (un 
 - 🧭 compara decenas de destinos a la vez en un **mapa**, por zona, temática o presupuesto (**Explorar**);
 - 🏖️ calcula tus **puentes y festivos** (nacionales y de tu comunidad) y busca la escapada más barata para cada uno;
 - 🧳 estima el **equipaje incluido** (mochila, cabina, facturada) y el **precio total real** por aerolínea y viajeros;
+- 🏝️ calcula el precio con **descuento de residente** (Canarias y Baleares: 75 % en vuelos nacionales);
 - 🔥 detecta **chollos, bajadas, mínimos históricos** y precios bajo tu objetivo, y te **avisa con antelación** por Telegram, push al móvil (ntfy) o email;
 - 👀 te deja **vigilar vuelos concretos** (ida o ida y vuelta) y te avisa si suben o bajan;
 - ⚡ comprueba el **precio real en Google Flights** con su rango habitual y su historial (opcional, con SerpApi);
@@ -17,8 +18,8 @@ Tu buscador y vigilante de vuelos **personal**. Le dices desde dónde sales (un 
 | ![Inicio](docs/inicio.jpg) | ![Mejor día](docs/mejor-dia.jpg) |
 | **Detalle, equipaje y cuadrícula de fechas** | **Explorar destinos** |
 | ![Detalle](docs/detalle.jpg) | ![Explorar](docs/explorar.jpg) |
-| **Calendario de precios** | **Puentes y festivos** |
-| ![Calendario](docs/calendario.jpg) | ![Festivos](docs/festivos.jpg) |
+| **Puentes y festivos** | **Descuento de residente** |
+| ![Festivos](docs/festivos.jpg) | ![Residente](docs/residente.jpg) |
 
 ---
 
@@ -48,15 +49,15 @@ python -m app
 
 Sin configurar nada funciona en **modo demo**, con un simulador de precios realista. Para usar **precios reales** solo necesitas un token gratuito de Travelpayouts (ver abajo).
 
-## 🌍 Usarla online (desde el móvil, fuera de casa)
+## 🌍 Usarla online y gratis
 
-Mira **[DEPLOY.md](DEPLOY.md)**. Hay tres opciones:
+Mira **[DEPLOY.md](DEPLOY.md)**. Estas son las opciones gratuitas:
 
-- **Railway**: unos 5 $/mes, se despliega desde GitHub y es la más sencilla.
-- **Tu PC con un túnel** gratuito (Cloudflare o Tailscale).
-- **Un servidor propio** con Docker y HTTPS automático.
+- **GitHub Actions** (incluido): escaneos y avisos cada 6 horas aunque apagues el PC.
+- **Oracle Cloud Always Free + Tailscale Funnel**: la web entera online 24/7, gratis.
+- **Tu PC + túnel** (Tailscale o Cloudflare).
 
-Pon siempre `APP_PASSWORD`: la web pedirá contraseña.
+Si prefieres no complicarte, **Railway** cuesta unos 5 $/mes. Pon siempre `APP_PASSWORD`: la web pedirá contraseña.
 
 ---
 

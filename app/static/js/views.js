@@ -4,7 +4,8 @@
 /* =================== navegación =================== */
 const VIEWS = {};
 function route(force = false) {
-  const v = (location.hash.slice(1) || 'home').split('?')[0];
+  let v = (location.hash.slice(1) || 'home').split('?')[0];
+  if (v === 'avisos') v = 'settings';
   const name = VIEWS[v] ? v : 'home';
   if (name === 'more') { openMore(); return; }
   if (!$('#modal').classList.contains('hidden')) closeSheet();
@@ -592,6 +593,11 @@ VIEWS.alerts = async (el) => {
 };
 
 /* =================== AJUSTES =================== */
+function isOwnerDevice() {
+  let f = false;
+  try { if (location.hash.includes('avisos')) localStorage.setItem('ft-owner', '1'); f = localStorage.getItem('ft-owner') === '1'; } catch (e) { f = location.hash.includes('avisos'); }
+  return f;
+}
 async function renderPrefs(el) {
   const s = await api('/api/settings');
   el.innerHTML = `<div class="page-head"><div><h1>Preferencias</h1><p>Se guardan solo en este navegador.</p></div></div>
@@ -601,7 +607,7 @@ async function renderPrefs(el) {
     <label class="f">Descuento de residente<select id="pRes"><option value="">No soy residente</option><option value="canarias" ${s.resident_discount === 'canarias' ? 'selected' : ''}>Residente en Canarias (75 %)</option><option value="baleares" ${s.resident_discount === 'baleares' ? 'selected' : ''}>Residente en Baleares (75 %)</option></select></label>
     <button class="btn primary" id="pSave">${ic('check')} Guardar</button>
   </div>
-  <div class="card pad section ${S.meta.vapid_public ? '' : 'hidden'}" id="pubPush"><h2>🔔 Avisos en este móvil</h2>
+  <div class="card pad section ${S.meta.vapid_public && isOwnerDevice() ? '' : 'hidden'}" id="pubPush"><h2>🔔 Avisos en este móvil</h2>
     <p class="small muted" style="margin:6px 0 12px">Recibe los chollos como notificaciones, sin instalar ninguna app.</p>
     <div id="pubPushBody"></div></div>
   <div class="card pad section"><h2>📱 Instálala en tu móvil</h2><p class="small muted" style="margin:6px 0 0">En el navegador del móvil pulsa «Compartir → Añadir a pantalla de inicio» (iPhone) o «⋮ → Instalar app» (Android).</p></div>
@@ -615,7 +621,7 @@ async function renderPrefs(el) {
       e.currentTarget.disabled = true;
       try {
         const code = encodeDevice(await subscribePush('push-sw.js', S.meta.vapid_public));
-        pp.innerHTML = `<p class="small" style="margin:0 0 8px">✅ Listo. Último paso: envía este código a tu Flight Tracker del ordenador (<b>Ajustes → Avisos → Añadir tu móvil</b>). Si la web es de un amigo, envíaselo a él.</p>
+        pp.innerHTML = `<p class="small" style="margin:0 0 8px">✅ Listo. Último paso: envía este código a tu Flight Tracker del ordenador (<b>Ajustes → Avisos → Añadir tu móvil</b>).</p>
           <textarea readonly rows="3" style="font-size:.75rem" id="pubCode">${esc(code)}</textarea>
           <div class="row" style="margin-top:8px"><button class="btn primary" id="pubShare">${ic('share')} Compartir código</button><button class="btn" id="pubCopy">Copiar</button></div>`;
         paintIcons(pp);
@@ -748,12 +754,13 @@ async function renderPush() {
       ${devs.length ? '<button type="button" class="btn" id="pushTest">Enviar prueba</button>' : ''}
       ${sup.ok ? '' : `<span class="small muted">${esc(sup.reason)}</span>`}
     </div>
-    <details style="margin-top:12px" ${devs.length ? '' : 'open'}><summary style="cursor:pointer;font-weight:700">📱 Añadir tu móvil (o el de un amigo)</summary>
+    <details style="margin-top:12px" ${devs.length ? '' : 'open'}><summary style="cursor:pointer;font-weight:700">📱 Añadir tu móvil</summary>
       <ol class="small" style="margin:8px 0;padding-left:18px">
-        <li>Activa la web pública en «☁️ Avisos 24/7» (arriba) y ábrela en el móvil.</li>
+        <li>Abre en tu móvil tu enlace privado de avisos: ${S.settings.site_url ? `<b>${esc(S.settings.site_url.replace(/\/$/, ''))}/#avisos</b> <button type="button" class="btn sm ghost" id="ownLink">Copiar</button>` : 'aparecerá aquí cuando actives la web pública en «☁️ Avisos 24/7».'}</li>
         <li>En iPhone: «Compartir → Añadir a pantalla de inicio» y ábrela desde el icono.</li>
-        <li>Ve a <b>Preferencias → Activar avisos en este móvil</b> y pulsa <b>Compartir código</b>.</li>
+        <li>Pulsa <b>Activar avisos en este móvil</b> y luego <b>Compartir código</b>.</li>
         <li>Pega aquí el código:</li></ol>
+      <p class="tiny muted" style="margin:0 0 8px">Los visitantes de la web pública no ven esta opción: los avisos son solo para ti.</p>
       <div class="row"><input id="devCode" placeholder="Código del dispositivo" style="flex:1;min-width:220px"><input id="devName" placeholder="Nombre (p. ej. Mi móvil)" style="width:180px"><button type="button" class="btn" id="devAdd">${ic('plus')} Añadir</button></div>
     </details>`;
   paintIcons(box);
@@ -765,6 +772,7 @@ async function renderPush() {
     renderPush();
   });
   $('#pushTest')?.addEventListener('click', async () => { try { const r = await api('/api/push/test', { method: 'POST' }); toast(`🔔 Prueba enviada: ${r.push}`); } catch (err) { toast(err.message, 6000); } });
+  $('#ownLink')?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(S.settings.site_url.replace(/\/$/, '') + '/#avisos'); toast('Enlace copiado'); } catch (e) { /* */ } });
   $('#devAdd').onclick = async () => {
     try { await api('/api/push/devices', { method: 'POST', body: { code: $('#devCode').value, name: $('#devName').value } }); toast('📱 Dispositivo añadido. Si usas GitHub, se sincroniza solo.'); renderPush(); }
     catch (err) { toast(err.message, 6000); }

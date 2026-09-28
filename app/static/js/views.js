@@ -34,10 +34,10 @@ function openMore() {
 async function refreshStatus() {
   const s = await api('/api/status'); S.status = s;
   const last = s.last_scan;
-  $('#sideStatus').innerHTML = `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza cada mañana</div>`;
+  const side = $('#sideStatus'); if (side) side.innerHTML = `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza cada mañana</div>`;
   const ban = [];
   if (isIOS() && !isStandalone() && !S.iosHintClosed) ban.push(`<div class="banner info" id="iosHint">📲 <div><b>Úsala como app en tu iPhone:</b> pulsa <b>Compartir</b> → <b>Añadir a pantalla de inicio</b>.</div><button class="btn icon ghost" onclick="S.iosHintClosed=1;this.parentElement.remove()">✕</button></div>`);
-  $('#banners').innerHTML = ban.join('');
+  const bn = $('#banners'); if (bn) bn.innerHTML = ban.join('');
   return s;
 }
 async function startScan() {
@@ -45,8 +45,8 @@ async function startScan() {
   const w = await workingConfig(); sendConfig(w.cfg);
   toast('Pulsa «Create» en GitHub para buscar precios ahora.', 6000);
 }
-$('#scanBtn').onclick = startScan; $('#scanBtnM').onclick = startScan;
-$('#themeBtn').onclick = cycleTheme; $('#themeBtnM').onclick = cycleTheme;
+[$('#scanBtn'), $('#scanBtnM')].forEach((b) => { if (b) b.onclick = startScan; });
+[$('#themeBtn'), $('#themeBtnM')].forEach((b) => { if (b) b.onclick = cycleTheme; });
 
 /* =================== formulario de búsqueda reutilizable =================== */
 function monthOptions() {

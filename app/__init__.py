@@ -8,7 +8,7 @@ Todo funciona en GitHub:
 import logging
 import os
 
-__version__ = "5.0.0"
+__version__ = "6.1.0"
 
 
 def init(db_path: str = None):

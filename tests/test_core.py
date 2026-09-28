@@ -224,7 +224,7 @@ class ScanAndSiteTest(TmpDB):
         with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
             html = fh.read()
         self.assertIn("<title>Mis vuelos</title>", html)
-        self.assertIn('src="static/js/admin.js"', html)
+        self.assertRegex(html, r'src="static/js/admin\.js\?v=[\d.]+-\d+"')   # versionado contra la caché
 
 
 class EnvConfigTest(TmpDB):

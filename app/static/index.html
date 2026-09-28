@@ -72,6 +72,17 @@
 <div class="modal hidden" id="modal"><div class="sheet" id="sheet"></div></div>
 <div class="toast hidden" id="toast"></div>
 
+<script>
+  /* Si algo falla al cargar, mostrarlo en vez de dejar la página en blanco */
+  window.addEventListener('error', function (e) {
+    var c = document.querySelector('.content'); if (!c || c.dataset.err) return; c.dataset.err = 1;
+    var d = document.createElement('div'); d.className = 'card empty';
+    d.innerHTML = '<h3>La web no ha cargado bien</h3><p>Suele ser la caché del navegador tras una actualización.</p>'
+      + '<p><button class="btn primary" onclick="location.reload(true)">Recargar</button></p><p class="tiny muted"></p>';
+    d.querySelector('.tiny').textContent = (e.message || '') + (e.filename ? ' · ' + e.filename.split('/').pop() : '');
+    c.prepend(d);
+  });
+</script>
 <script src="/static/js/core.js"></script>
 <script src="/static/js/static-mode.js"></script>
 <script src="/static/js/detail.js"></script>

@@ -155,6 +155,10 @@ def _export(out_dir, s, site_title):
     with open(os.path.join(static_src, "index.html"), encoding="utf-8") as f:
         html = f.read()
     html = html.replace('href="/static/', 'href="static/').replace('src="/static/', 'src="static/')
+    # versión en cada fichero: el navegador nunca mezcla ficheros viejos (en caché) con nuevos
+    import time as _t
+    ver = f"{__version__}-{int(_t.time())}"
+    html = re.sub(r'((?:src|href)="static/[^"?]+\.(?:js|css))"', rf'\1?v={ver}"', html)
     html = html.replace('href="/manifest.webmanifest"', 'href="manifest.webmanifest"')
     if site_title:
         html = re.sub(r"<title>.*?</title>", f"<title>{site_title}</title>", html)

@@ -7,13 +7,10 @@
     "KGL",
     "SCL",
     "PUQ",
-    "IPC",
     "BUE",
-    "BRC",
     "MDZ",
     "IGR",
     "USH",
-    "FTE",
     "LIM",
     "CUZ",
     "AQP",
@@ -22,10 +19,8 @@
     "SSA",
     "REC",
     "FOR",
-    "FLN",
     "BSB",
     "IGU",
-    "VVI",
     "LPB",
     "REK",
     "OSL",
@@ -33,12 +28,13 @@
     "BGO",
     "TYO",
     "OSA",
-    "FUK",
     "OKA",
     "SPK",
     "DPS",
     "JKT",
-    "LOP"
+    "LOP",
+    "CPH",
+    "SJO"
   ],
   "origins": [
     "MAD",
@@ -60,5 +56,8 @@
   "dep_windows": "",
   "exclude_airlines": [],
   "holiday_region": "",
-  "trip_lengths": {}
+  "trip_lengths": {
+    "NO": "weekend",
+    "DK": "weekend"
+  }
 }

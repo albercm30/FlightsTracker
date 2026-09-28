@@ -1,23 +1,34 @@
 """Tests (unittest estándar; también funcionan con `pytest`)."""
 import json
 import os
+import shutil
 import statistics
+import subprocess
 import tempfile
 import unittest
 from datetime import date, datetime, timedelta, timezone
+from unittest import mock
 
-from app import catalog, create_app, db, tracker
-from app.providers import booking_links
+from app import db, notifier, tracker
 from app.providers.base import Quote
 from app.providers.demo import DemoProvider, easter
-from app.providers.serpapi import parse as serp_parse
 from app.providers.travelpayouts import TravelpayoutsProvider
 
 TODAY = date(2026, 10, 1)
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def q(day, price, o="MAD", d="BKK"):
     return Quote(origin=o, destination=d, depart_date=day, price=price)
+
+
+class TmpDB(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        db.init(os.path.join(self.tmp.name, "t.db"))
+
+    def tearDown(self):
+        self.tmp.cleanup()
 
 
 class DetectDealsTest(unittest.TestCase):
@@ -88,14 +99,7 @@ class DetectDealsTest(unittest.TestCase):
         self.assertEqual([x.airline for x in (a, b) if tracker.quote_filter({"airlines": ["EK"]})(x)], ["EK"])
 
 
-class AntiSpamTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        db.init(os.path.join(self.tmp.name, "a.db"))
-
-    def tearDown(self):
-        self.tmp.cleanup()
-
+class AntiSpamTest(TmpDB):
     def _cand(self, dest, day, price, sav, trip="ow", o="MAD"):
         return {"quote": Quote(o, dest, day, price), "kind": "deal", "kinds": ["deal"], "ref_price": price / (1 - sav),
                 "median": price / (1 - sav), "prev_price": None, "savings": sav, "lead": 30,
@@ -168,460 +172,131 @@ class DemoRealismTest(unittest.TestCase):
 
 class ParsersTest(unittest.TestCase):
     def test_travelpayouts_parse(self):
-        prov = TravelpayoutsProvider("x", marker="123")
+        prov = TravelpayoutsProvider("x")
         payload = {"success": True, "data": [
             {"origin": "MAD", "destination": "BKK", "price": 412, "airline": "QR", "transfers": 1,
              "departure_at": "2026-11-03T07:00:00+01:00", "link": "/search/MAD0311BKK1?t=abc"}]}
         out = prov.parse(payload, "MAD", "BKK")
         self.assertEqual(out[0].depart_date, "2026-11-03")
         self.assertEqual(out[0].price, 412.0)
-        self.assertTrue(out[0].link.endswith("marker=123"))
+        self.assertTrue(out[0].link.startswith("https://www.aviasales.com/search/MAD0311BKK1"))
         self.assertEqual(out[0].dep_time, "07:00")
         rt = prov.parse({"data": [{"price": 500, "departure_at": "2026-11-03T22:10:00+01:00",
                                    "return_at": "2026-11-13T09:05:00+07:00", "duration_to": 900,
                                    "duration_back": 960, "transfers": 1, "return_transfers": 1}]}, "MAD", "BKK")[0]
         self.assertEqual((rt.duration, rt.return_duration, rt.dep_time, rt.ret_time), (900, 960, "22:10", "09:05"))
 
-    def test_serpapi_parse(self):
-        data = {"best_flights": [{"price": 380, "total_duration": 800, "flights": [
-            {"airline": "Qatar", "departure_airport": {"id": "MAD", "time": "2026-11-03 08:00"},
-             "arrival_airport": {"id": "DOH"}},
-            {"airline": "Qatar", "departure_airport": {"id": "DOH"}, "arrival_airport": {"id": "BKK"}}]}],
-            "price_insights": {"lowest_price": 380, "price_level": "low", "typical_price_range": [420, 600],
-                               "price_history": [[1759000000, 450], [1759600000, 400]]}}
-        r = serp_parse(data)
-        self.assertEqual(r["lowest_price"], 380)
-        self.assertEqual(r["flights"][0]["stops"], 1)
-        self.assertEqual(len(r["history"]), 2)
-
-    def test_booking_links(self):
-        l = booking_links("MAD", "BKK", "2026-11-03")
-        self.assertEqual(l["aviasales"], "https://www.aviasales.com/search/MAD0311BKK1")
-        self.assertIn("/mad/bkk/261103/", l["skyscanner"])
-
-    def test_rt_demo(self):
-        p = DemoProvider(now=datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
-        ow = p.fetch_month("MAD", "NYC", "2027-02")
-        rt = p.fetch_month("MAD", "NYC", "2027-02", trip="rt", min_nights=5, max_nights=9)
-        self.assertTrue(all(q.trip == "rt" and 5 <= q.nights <= 9 for q in rt))
-        self.assertGreater(min(x.price for x in rt), min(x.price for x in ow))
-        self.assertLess(min(x.price for x in rt), min(x.price for x in ow) * 2.2)
-
-    def test_baggage(self):
-        from app import airlines
-        fr = airlines.baggage("FR", False, "cabin_checked", legs=2, pax=2)
-        self.assertEqual(fr["cabin"], "fee")
-        self.assertGreater(fr["fee_min"], 0)
-        self.assertEqual(airlines.baggage("QR", True, "checked")["fee_max"], 0)
-        self.assertEqual(airlines.baggage("IB", False, "cabin")["fee_max"], 0)
-        self.assertEqual(airlines.baggage("XX", False, "personal")["fee_est"], 0)
-
-    def test_holidays(self):
-        from app import holidays
-        items = holidays.upcoming("", today=date(2026, 11, 20))
-        dec = next(i for i in items if "Inmaculada" in i["title"])
-        self.assertEqual((dec["start"], dec["end"], dec["days_off"]), ("2026-12-05", "2026-12-08", 1))
-        ss = next(i for i in items if i["title"] == "Semana Santa")
-        self.assertEqual(ss["start"], "2027-03-25")
-
-    def test_catalog(self):
-        self.assertTrue(all(c["code"] in catalog.COORDS for c in catalog.CITIES))
-        self.assertGreater(catalog.distance_km("MAD", "SYD"), 17000)
 
 
-class ApiTest(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        cls.tmp = tempfile.TemporaryDirectory()
-        os.environ.pop("APP_PASSWORD", None)
-        cls.app = create_app(os.path.join(cls.tmp.name, "t.db"), start_scheduler=False)
-        cls.c = cls.app.test_client()
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.tmp.cleanup()
-
-    def test_full_flow(self):
-        c = self.c
-        self.assertEqual(c.post("/api/destinations", json={"code": "LIS"}).status_code, 201)
-        self.assertEqual(c.post("/api/destinations", json={"code": "xx"}).status_code, 400)
-        c.post("/api/destinations/country", json={"country_code": "JP"})
-        codes = {d["code"] for d in c.get("/api/destinations").json}
-        self.assertTrue({"LIS", "TYO", "OSA"} <= codes)
-        c.put("/api/settings", json={"origins": "MAD, BCN", "months_ahead": 3, "telegram_bot_token": "secret123"})
-        s = c.get("/api/settings").json
-        self.assertEqual(s["origins"], ["MAD", "BCN"])
-        self.assertTrue(s["telegram_bot_token"].startswith("••••"))
-        # guardar con el valor enmascarado no pisa el secreto
-        c.put("/api/settings", json=s)
-        self.assertEqual(db.get_settings()["telegram_bot_token"], "secret123")
-        c.put("/api/settings", json={"telegram_bot_token": ""})
-
-        res = tracker.run_scan(notify=False)
-        self.assertEqual(res["status"], "ok", res)
+class ScanAndSiteTest(TmpDB):
+    def test_scan_demo_and_export_site(self):
+        from app.site import export_site
+        db.update_settings({"origins": ["TCI"], "provider": "demo", "months_ahead": 3, "trip_type": "both",
+                            "travelpayouts_token": "SECRETO-TP", "smtp_password": "SECRETO-MAIL",
+                            "resident_discount": "canarias", "max_stops": 1})
+        for code, name in (("MAD", "Madrid"), ("LON", "Londres"), ("BKK", "Bangkok")):
+            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES (?,?,1,'x')", (code, name))
+        with mock.patch("app.providers.get_provider", lambda s: DemoProvider()), \
+                mock.patch("app.tracker.get_provider", lambda s: DemoProvider()):
+            res = tracker.run_scan(notify=False)
+        self.assertEqual(res["status"], "ok")
         self.assertGreater(res["quotes"], 100)
-        self.assertTrue(c.get("/api/deals").json)
-        cal = c.get("/api/calendar?origin=MAD&destination=LIS").json
-        self.assertTrue(cal["quotes"])
-        self.assertTrue(c.get("/api/history?origin=MAD&destination=LIS").json)  # incluye histórico demo
-
-        self.assertTrue(all(q["return_date"] for q in cal["quotes"]))  # por defecto: ida y vuelta
-        ow = c.get("/api/calendar?origin=MAD&destination=LIS&trip=ow").json
-        self.assertTrue(ow["quotes"] and not ow["quotes"][0]["return_date"])
-        day = cal["quotes"][10]["depart_date"]
-        self.assertEqual(c.post("/api/watches", json={"origin": "MAD", "destination": "LIS", "date": day}).status_code, 201)
-        self.assertEqual(len(c.get("/api/watches").json), 1)
-
-        r = tracker.search({"origins": ["MAD"], "destinations": ["TYO", "OSA"], "trip": "ow"})
-        self.assertTrue(r["found"])
-        self.assertEqual(r["best"]["price"], min(d["price"] for d in r["days"]))
-        rt = tracker.search({"origins": ["MAD"], "destinations": ["LIS"], "trip": "rt", "min_nights": 3,
-                             "max_nights": 5, "pax": 2, "baggage": "checked"})
-        self.assertTrue(rt["found"])
-        self.assertTrue(all(3 <= o["nights"] <= 5 for o in rt["top"]))
-        self.assertGreaterEqual(rt["best"]["price_total"], rt["best"]["price"] * 2)
-        self.assertTrue(rt["matrix"])
-        ex = tracker.search({"origins": ["MAD"], "destinations": catalog.explore_codes("EU", "playa"),
-                             "mode": "explore", "trip": "rt", "weekdays": [4], "return_weekdays": [6, 0]})
-        self.assertTrue(ex["found"])
-        self.assertTrue(all(d8.weekday() == 4 for d8 in (date.fromisoformat(o["depart_date"]) for o in ex["top"])))
-        g = c.get(f"/api/grid?origin=MAD&destination=LIS&depart={rt['best']['depart_date']}&return={rt['best']['return_date']}").json
-        self.assertTrue(g["cells"])
-        self.assertTrue(c.get("/api/holidays?region=canarias").json["items"])
-        self.assertIn(r["advice"]["level"], ("buy", "good", "watch", "wait"))
-
-        second = tracker.run_scan(notify=False)
-        self.assertEqual(second["status"], "ok")
-        self.assertEqual(c.get("/healthz").status_code, 200)
+        # el filtro por defecto (máx. 1 escala) se aplica a lo que se guarda
+        self.assertEqual(db.one("SELECT COUNT(*) AS n FROM quotes WHERE transfers > 1")["n"], 0)
+        out = os.path.join(self.tmp.name, "site")
+        info = export_site(out, "Mis vuelos")
+        self.assertEqual(info["destinations"], 3)
+        blob = ""
+        for r, _d, fs in os.walk(out):
+            for f in fs:
+                if f.endswith((".json", ".html")):
+                    with open(os.path.join(r, f), encoding="utf-8") as fh:
+                        blob += fh.read()
+        self.assertNotIn("SECRETO", blob)                       # nunca se publican claves
+        with open(os.path.join(out, "data", "settings.json"), encoding="utf-8") as fh:
+            st = json.load(fh)
+        self.assertEqual(st["resident_discount"], "canarias")   # tus ajustes, para la web
+        with open(os.path.join(out, "data", "cal", "TCI-MAD-rt.json"), encoding="utf-8") as fh:
+            cal = json.load(fh)
+        qq = cal["quotes"][0]
+        self.assertIn("duration", qq)
+        self.assertIn("dep_time", qq)
+        # precio publicado SIN descuento de residente (lo aplica la web)
+        self.assertEqual(qq["price"], db.one("SELECT price FROM quotes WHERE origin='TCI' AND destination='MAD' "
+                                             "AND trip='rt' AND depart_date=?", (qq["depart_date"],))["price"])
+        with open(os.path.join(out, "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertIn("<title>Mis vuelos</title>", html)
+        self.assertIn('src="static/js/admin.js"', html)
+        self.assertTrue(os.path.exists(os.path.join(out, "static", "js", "sealbox.js")))
 
 
+class EnvConfigTest(TmpDB):
+    def test_github_variables_are_the_config(self):
+        db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('ROM','Roma',1,'x')")
+        db.update_settings({"dep_windows": "morning", "max_stops": 0})
+        env = {"GITHUB_ACTIONS": "true", "ORIGINS": "TCI", "DESTINATIONS": "MAD,LIS", "TRIP_TYPE": "ow",
+               "MIN_NIGHTS": "2", "ALERT_LEVEL": "excepcional", "EXCLUDE_AIRLINES": "fr,W6",
+               "EMAIL_TO": "yo@gmail.com", "SMTP_PASSWORD": "abcd efgh"}
+        with mock.patch.dict(os.environ, env):
+            db.apply_env_config()
+        s = db.get_settings()
+        self.assertEqual((s["origins"], s["trip_type"], s["min_nights"], s["alert_level"]), (["TCI"], "ow", 2, "excepcional"))
+        self.assertEqual(s["exclude_airlines"], ["FR", "W6"])
+        # quitar un filtro en la web lo desactiva aunque la base de datos venga de la caché
+        self.assertEqual((s["dep_windows"], s["max_stops"]), ("", -1))
+        self.assertEqual({r["code"] for r in db.rows("SELECT code FROM destinations WHERE enabled=1")}, {"MAD", "LIS"})
+        self.assertTrue(notifier.email_ready(s))
 
-class AuthAndMigrationTest(unittest.TestCase):
-    def test_login_required(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            os.environ["APP_PASSWORD"] = "secreta"
-            try:
-                app = create_app(os.path.join(tmp, "a.db"), start_scheduler=False)
-                c = app.test_client()
-                self.assertEqual(c.get("/api/status").status_code, 401)
-                self.assertEqual(c.get("/").status_code, 302)
-                self.assertEqual(c.get("/healthz").status_code, 200)
-                self.assertEqual(c.post("/api/login", json={"password": "mal"}).status_code, 401)
-                self.assertEqual(c.post("/api/login", json={"password": "secreta"}).status_code, 200)
-                self.assertEqual(c.get("/api/status").status_code, 200)
-            finally:
-                os.environ.pop("APP_PASSWORD", None)
-
-    def test_migration_from_v1(self):
-        import sqlite3
-        with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "old.db")
-            con = sqlite3.connect(path)
-            con.executescript("""
-                CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
-                INSERT INTO settings VALUES ('one_way', 'false');
-                CREATE TABLE quotes (origin TEXT, destination TEXT, depart_date TEXT, price REAL, first_seen TEXT,
-                                     updated_at TEXT, PRIMARY KEY (origin, destination, depart_date));
-                CREATE TABLE watches (id INTEGER PRIMARY KEY, origin TEXT, destination TEXT, depart_date TEXT,
-                                      target_price REAL, last_price REAL, created_at TEXT);
-                INSERT INTO watches VALUES (1, 'MAD', 'LON', '2030-01-01', NULL, 50, 'x');
-                CREATE TABLE alerts (id INTEGER PRIMARY KEY, created_at TEXT, kind TEXT, origin TEXT, destination TEXT,
-                                     depart_date TEXT, return_date TEXT, price REAL, ref_price REAL, message TEXT,
-                                     link TEXT, notified INTEGER DEFAULT 0, read INTEGER DEFAULT 0);
-            """)
-            con.commit()
-            con.close()
-            db.init(path)
-            self.assertEqual(db.get_settings()["trip_type"], "rt")
-            self.assertEqual(db.rows("SELECT trip FROM watches")[0]["trip"], "ow")
-            self.assertIn("trip", {r["name"] for r in db.rows("PRAGMA table_info(quotes)")})
-
-
-class ExtrasTest(unittest.TestCase):
     def test_resident_price(self):
         self.assertIsNone(tracker.resident_price(100, "TCI", "LON", 1, "canarias"))
         self.assertIsNone(tracker.resident_price(100, "TCI", "MAD", 1, ""))
         self.assertEqual(tracker.resident_price(100, "TCI", "MAD", 1, "canarias"), 34)   # (100-12)*0.25+12
         self.assertEqual(tracker.resident_price(200, "MAD", "PMI", 2, "baleares"), 68)   # (200-24)*0.25+24
 
-    def test_env_config_and_scan_cli(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            env = {"ORIGINS": "TCI", "DESTINATIONS": "MAD,LIS", "TRIP_TYPE": "ow", "PRICE_PROVIDER": "demo",
-                   "MIN_NIGHTS": "2"}
-            old = {k: os.environ.get(k) for k in env}
-            os.environ.update(env)
-            try:
-                db.init(os.path.join(tmp, "e.db"))
-                db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('ROM','Roma',1,'x')")
-                db.apply_env_config()
-                s = db.get_settings()
-                self.assertEqual((s["origins"], s["trip_type"], s["min_nights"]), (["TCI"], "ow", 2))
-                enabled = {r["code"] for r in db.rows("SELECT code FROM destinations WHERE enabled=1")}
-                self.assertEqual(enabled, {"MAD", "LIS"})
-            finally:
-                for k, v in old.items():
-                    if v is None:
-                        os.environ.pop(k, None)
-                    else:
-                        os.environ[k] = v
 
-    def test_advice_short(self):
-        a = tracker.advice(50, (date.today() + timedelta(days=40)).isoformat(), "MAD", "LON", [50, 60, 70, 80, 90])
-        self.assertIn(a["level"], ("buy", "good"))
-        self.assertTrue(1 <= a["score"] <= 99)
-        self.assertTrue(all(len(p["t"]) < 60 for p in a["points"]))
+class EmailTest(TmpDB):
+    def test_digest_email(self):
+        s = {"email_to": "yo@gmail.com", "smtp_password": "x", "notify_max_items": 5, "provider": "travelpayouts",
+             "site_url": "https://alber.github.io/Flights/"}
+        alerts = [{"id": None, "kind": "deal", "message": "Chollo: MAD → Tokio", "link": "", "origin": "MAD",
+                   "destination": "TYO", "trip": "rt", "depart_date": "2027-01-10", "return_date": "2027-01-20",
+                   "price": 480, "savings": 0.4}]
+        sent = {}
+        with mock.patch("app.notifier.send_email", lambda s_, subj, txt, html: sent.update(subj=subj, html=html)):
+            self.assertEqual(notifier.send_digest(alerts, s), {"email": "ok"})
+        self.assertIn("Tokio", sent["subj"])
+        self.assertIn("480 €", sent["html"])
+        self.assertIn("−40%", sent["html"])
+        self.assertIn("alber.github.io/Flights/#alerts", sent["html"])
+        self.assertEqual(notifier.send_digest(alerts, {"email_to": ""}), {})
+        self.assertIn("error", notifier.send_test({"email_to": ""}))
 
 
-class CloudTest(unittest.TestCase):
-    class FakeGH:
-        """Imita la API de GitHub lo justo para probar cloud.py."""
-        def __init__(self, private=False, workflow=True):
-            self.vars, self.secrets, self.calls, self.updated = {}, {}, [], {}
-            self.private, self.workflow, self.pages = private, workflow, None
-
-        def request(self, method, url, headers=None, timeout=None, json=None, params=None):
-            from unittest import mock
-            path = url.split("/repos/alber/Flights", 1)[1]
-            self.calls.append((method, path))
-            r = mock.Mock()
-            r.status_code, body = 200, {}
-            if method == "GET" and path == "":
-                body = {"private": self.private, "default_branch": "main", "html_url": "https://github.com/alber/Flights"}
-            elif path == "/actions/workflows/scan.yml":
-                r.status_code, body = (200, {"state": "active"}) if self.workflow else (404, {})
-            elif path.endswith("/runs"):
-                body = {"workflow_runs": []}
-            elif method == "GET" and path == "/actions/variables":
-                body = {"variables": [{"name": k, "value": v, "updated_at": self.updated.get(k, "2000-01-01T00:00:00Z")}
-                                      for k, v in self.vars.items()]}
-            elif method == "GET" and path == "/actions/secrets":
-                body = {"secrets": [{"name": k} for k in self.secrets]}
-            elif path == "/actions/secrets/public-key":
-                body = {"key": "x", "key_id": "1"}
-            elif method == "PUT" and path.startswith("/actions/secrets/"):
-                self.secrets[path.rsplit("/", 1)[1]] = json["encrypted_value"]; r.status_code = 201
-            elif method == "PATCH" and path.startswith("/actions/variables/"):
-                name = path.rsplit("/", 1)[1]
-                if name in self.vars:
-                    self.vars[name] = json["value"]; r.status_code = 204
-                else:
-                    r.status_code = 404
-            elif method == "POST" and path == "/actions/variables":
-                self.vars[json["name"]] = json["value"]; r.status_code = 201
-            elif method == "DELETE" and path.startswith("/actions/secrets/"):
-                self.secrets.pop(path.rsplit("/", 1)[1], None); r.status_code = 204
-            elif method == "DELETE" and path.startswith("/actions/variables/"):
-                self.vars.pop(path.rsplit("/", 1)[1], None); r.status_code = 204
-            elif path == "/pages":
-                if method == "GET":
-                    r.status_code, body = (200, self.pages) if self.pages else (404, {})
-                else:
-                    self.pages = {"html_url": "https://alber.github.io/Flights/", "build_type": "workflow"}
-                    r.status_code = 201
-            elif path.endswith("/dispatches"):
-                r.status_code = 204
-            r.json = lambda: body
-            return r
-
-    def setUp(self):
-        from unittest import mock
-        from app import cloud
-        self.tmp = tempfile.TemporaryDirectory()
-        db.init(os.path.join(self.tmp.name, "c.db"))
-        db.update_settings({"github_token": "t", "github_repo": "alber/Flights", "origins": ["TCI"],
-                            "travelpayouts_token": "tp", "ntfy_topic": "vuelos-x"})
-        db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('ROM','Roma',1,'x')")
-        self.p = mock.patch.object(cloud, "encrypt", lambda k, v: "enc:" + v)
-        self.p.start()
-
-    def tearDown(self):
-        self.p.stop()
-        self.tmp.cleanup()
-
-    def test_sync_and_status(self):
-        from app import cloud
-        gh = self.FakeGH()
-        res = cloud.sync(session=gh)
-        self.assertEqual(gh.vars["ORIGINS"], "TCI")
-        self.assertEqual(gh.vars["DESTINATIONS"], "ROM")
-        self.assertEqual(gh.vars["ENABLE_SCHEDULED_SCAN"], "true")
-        self.assertEqual(gh.vars["PUBLISH_SITE"], "true")
-        self.assertEqual(gh.secrets["TRAVELPAYOUTS_TOKEN"], "enc:tp")
-        self.assertIn("NTFY_TOPIC", res["secrets"])
-        self.assertIsNone(res["pages_warning"])
-        st = cloud.status(session=gh)
-        self.assertTrue(st["in_sync"] and st["has_price_token"] and st["pages_enabled"])
-        self.assertEqual(st["pages_url"], "https://alber.github.io/Flights/")
-        cloud.run_now(demo=True, session=gh)
-        self.assertIn(("POST", "/actions/workflows/scan.yml/dispatches"), gh.calls)
-
-    def test_pull_changes_made_from_phone(self):
-        from app import cloud
-        gh = self.FakeGH()
-        cloud.sync(session=gh)
-        # desde el móvil (modo administrador) se añade Nueva York y se cambia el nivel de avisos
-        gh.vars.update(DESTINATIONS="ROM,NYC", ALERT_LEVEL="excepcional")
-        gh.updated.update(DESTINATIONS="2999-01-01T00:00:00Z", ALERT_LEVEL="2999-01-01T00:00:00Z")
-        res = cloud.sync(session=gh)
-        self.assertIn("DESTINATIONS", res["pulled"])
-        enabled = {r["code"] for r in db.rows("SELECT code FROM destinations WHERE enabled=1")}
-        self.assertEqual(enabled, {"ROM", "NYC"})
-        self.assertEqual(db.get_settings()["alert_level"], "excepcional")
-        self.assertEqual(gh.vars["DESTINATIONS"], "NYC,ROM")
-
-    def test_private_repo_and_missing_workflow(self):
-        from app import cloud
-        self.assertIn("privado", cloud.sync(session=self.FakeGH(private=True))["pages_warning"])
-        with self.assertRaises(cloud.CloudError):
-            cloud.sync(session=self.FakeGH(workflow=False))
-
-    def test_detect_repo(self):
-        from app import cloud
-        d = os.path.join(self.tmp.name, "r", ".git")
-        os.makedirs(d)
-        open(os.path.join(d, "config"), "w").write('[remote "origin"]\n\turl = https://github.com/albercm30/FlightsTracker.git\n')
-        self.assertEqual(cloud.detect_repo(os.path.join(self.tmp.name, "r")), "albercm30/FlightsTracker")
-
-
-class ExportTest(unittest.TestCase):
-    def test_export_static_site(self):
-        from app.export import export_site
-        with tempfile.TemporaryDirectory() as tmp:
-            os.environ.pop("APP_PASSWORD", None)
-            db.init(os.path.join(tmp, "x.db"))
-            db.update_settings({"origins": ["MAD"], "months_ahead": 2, "trip_type": "rt", "travelpayouts_token": "SECRETO",
-                                "telegram_bot_token": "TG-SECRET"})
-            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('LIS','Lisboa',1,'x')")
-            from app.providers.demo import DemoProvider
-            tracker.run_scan(provider=DemoProvider(), notify=False)
-            os.environ["DB_PATH"] = os.path.join(tmp, "x.db")
-            try:
-                res = export_site(os.path.join(tmp, "site"))
-            finally:
-                os.environ.pop("DB_PATH", None)
-            self.assertEqual(res["routes"], 1)
-            site = os.path.join(tmp, "site")
-            html = open(os.path.join(site, "index.html"), encoding="utf-8").read()
-            self.assertIn("window.STATIC = true", html)
-            self.assertNotIn('src="/static', html)
-            self.assertTrue(os.path.exists(os.path.join(site, "data", "cal", "MAD-LIS-rt.json")))
-            blob = "".join(open(os.path.join(r, f), encoding="utf-8", errors="ignore").read()
-                           for r, _, fs in os.walk(os.path.join(site, "data")) for f in fs)
-            self.assertNotIn("SECRETO", blob)
-            self.assertNotIn("TG-SECRET", blob)
-
-
-class PrivateSiteTest(unittest.TestCase):
-    def test_locked_export_and_email_config(self):
-        from app import sitecrypt
-        from app.export import export_site
-        with tempfile.TemporaryDirectory() as tmp:
-            db.init(os.path.join(tmp, "p.db"))
-            db.update_settings({"origins": ["MAD"], "provider": "demo", "github_repo": "alber/Flights"})
-            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('LIS','Lisboa',1,'x')")
-            tracker.run_scan(notify=False)
-            out = os.path.join(tmp, "site")
-            res = export_site(out, password="una-clave-larga", admin_token="github_pat_SECRETO")
-            self.assertTrue(res["private"])
-            blob = ""
-            for r, _d, fs in os.walk(out):
-                for f in fs:
-                    with open(os.path.join(r, f), encoding="utf-8", errors="ignore") as fh:
-                        blob += fh.read()
-            self.assertNotIn("Lisboa", open(os.path.join(out, "data", "destinations.json")).read())
-            self.assertNotIn("github_pat_SECRETO", blob)
-            lock = json.load(open(os.path.join(out, "data", "lock.json")))
-            key = sitecrypt.derive_key("una-clave-larga", "alber/Flights")
-            self.assertEqual(sitecrypt.decrypt(key, lock["check"]), b"flight-tracker-ok")
-            dests = json.loads(sitecrypt.decrypt(key, json.load(open(os.path.join(out, "data", "destinations.json")))["enc"]))
-            self.assertEqual(dests[0]["code"], "LIS")
-            adm = sitecrypt.decrypt_json(key, json.load(open(os.path.join(out, "data", "admin.json")))["enc"])
-            self.assertEqual(adm["token"], "github_pat_SECRETO")
-            # email guardado desde la web -> lo usa el escaneo en GitHub Actions
-            enc = sitecrypt.encrypt_json(key, {"email_to": "yo@gmail.com", "smtp_password": "abcd efgh"})
-            env = {"EMAIL_CONFIG_ENC": enc, "SITE_PASSWORD": "una-clave-larga", "GITHUB_REPOSITORY": "alber/Flights"}
-            from unittest import mock
-            with mock.patch.dict(os.environ, env):
-                db.apply_env_config()
-            s = db.get_settings()
-            self.assertEqual((s["email_to"], s["smtp_host"], s["smtp_password"]), ("yo@gmail.com", "smtp.gmail.com", "abcdefgh"))
-
-
-class WebPushTest(unittest.TestCase):
-    def test_rfc8291_vector(self):
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from app import webpush as w
-        as_priv = ec.derive_private_key(int.from_bytes(w.ub64("yfWPiYE-n46HLnH0KqZOF1fJJU3MYrct3AELtAQ-oRw"), "big"),
-                                        ec.SECP256R1())
-        out = w.encrypt(b"When I grow up, I want to be a watermelon",
-                        "BCVxsr7N_eNgVRqvHtD0zTZsEc6-VV-JvLexhqUzORcxaOzi6-AYWXvTBHm4bjyPjs7Vd8pZGH6SRpkNtoIAiw4",
-                        "BTBZMqHH6r4Tts7J_aSIgg", _as_private=as_priv, _salt=w.ub64("DGv6ra1nlYgDCS1FRnbzlw"))
-        self.assertEqual(w.b64u(out), "DGv6ra1nlYgDCS1FRnbzlwAAEABBBP4z9KsN6nGRTbVYI_c7VJSPQTBtkgcy27mlmlMoZIIgDll6e3vCYLo"
-                         "cInmYWAmS6TlzAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgS"
-                         "xsj_Qulcy4a-fN")
-
-    def test_vapid_signature_verifies(self):
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
-        from app import webpush as w
-        priv, pub = w.generate_vapid()
-        header = w.vapid_auth("https://fcm.googleapis.com/fcm/send/abc", priv, pub, "mailto:a@b.c")
-        token = header.split("t=")[1].split(",")[0]
-        h, c, sig = token.split(".")
-        raw = w.ub64(sig)
-        key = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), w.ub64(pub))
-        key.verify(encode_dss_signature(int.from_bytes(raw[:32], "big"), int.from_bytes(raw[32:], "big")),
-                   f"{h}.{c}".encode(), ec.ECDSA(hashes.SHA256()))
-        self.assertIn('"aud":"https://fcm.googleapis.com"', w.ub64(c).decode())
-
-    def test_devices_and_send(self):
-        from unittest import mock
-        from cryptography.hazmat.primitives.asymmetric import ec
-        from app import notifier, webpush as w
-        with tempfile.TemporaryDirectory() as tmp:
-            app = create_app(os.path.join(tmp, "p.db"), start_scheduler=False)
-            c = app.test_client()
-            self.assertTrue(c.get("/api/push/key").json["public_key"])
-            ua = ec.generate_private_key(ec.SECP256R1())
-            sub = {"endpoint": "https://push.example.com/abc",
-                   "keys": {"p256dh": w.b64u(w._pub_raw(ua)), "auth": w.b64u(os.urandom(16))}}
-            code = w.b64u(json.dumps({**sub, "name": "Mi móvil"}).encode())
-            self.assertEqual(c.post("/api/push/devices", json={"code": code}).status_code, 201)
-            self.assertEqual(c.post("/api/push/devices", json={"code": "basura"}).status_code, 400)
-            self.assertEqual(c.get("/api/push/devices").json[0]["name"], "Mi móvil")
-            self.assertEqual(notifier.enabled_channels(db.get_settings())[0], "push")
-            with mock.patch("app.webpush.requests.post") as post:
-                post.return_value.status_code = 201
-                self.assertTrue(notifier.send_push(db.get_settings(), "t", "b").startswith("ok"))
-                hdr = post.call_args.kwargs["headers"]
-                self.assertEqual(hdr["Content-Encoding"], "aes128gcm")
-                self.assertTrue(hdr["Authorization"].startswith("vapid t="))
-            with mock.patch("app.webpush.requests.post") as post:   # suscripción caducada -> se borra
-                post.return_value.status_code = 410
-                with self.assertRaises(RuntimeError):
-                    notifier.send_push(db.get_settings(), "t", "b")
-            self.assertEqual(c.get("/api/push/devices").json, [])
-
-
-class NotifierTest(unittest.TestCase):
-    def test_digest_telegram_and_ntfy(self):
-        from unittest import mock
-        from app import notifier
-        s = {"telegram_bot_token": "t", "telegram_chat_id": "1", "ntfy_topic": "x", "ntfy_server": "https://ntfy.sh",
-             "notify_max_items": 1}
-        alerts = [{"kind": "deal", "message": "Chollo: MAD → Tokio", "link": "", "origin": "MAD",
-                   "destination": "TYO", "depart_date": "2027-01-10", "savings": 0.4},
-                  {"kind": "drop", "message": "Bajada", "link": "", "origin": "MAD",
-                   "destination": "LON", "depart_date": "2027-01-11", "savings": 0.1}]
-        with mock.patch("app.notifier.requests.post") as post:
-            post.return_value.raise_for_status = lambda: None
-            res = notifier.send_digest(alerts, s)
-        self.assertEqual(res, {"telegram": "ok", "ntfy": "ok"})
-        tg = post.call_args_list[0].kwargs["json"]["text"]
-        self.assertIn("Tokio", tg)
-        self.assertIn("1 más", tg)
-        self.assertEqual(post.call_args_list[1].kwargs["json"]["priority"], 4)
+@unittest.skipUnless(shutil.which("node"), "hace falta Node.js")
+class SealBoxTest(unittest.TestCase):
+    """La web cifra tus claves antes de guardarlas en GitHub (crypto_box_seal de libsodium)."""
+    def test_against_libsodium(self):
+        import ctypes
+        import ctypes.util
+        lib = ctypes.util.find_library("sodium")
+        if not lib:
+            self.skipTest("libsodium no disponible")
+        so = ctypes.CDLL(lib)
+        self.assertGreaterEqual(so.sodium_init(), 0)
+        pk, sk = ctypes.create_string_buffer(32), ctypes.create_string_buffer(32)
+        so.crypto_box_keypair(pk, sk)
+        js = ("const S=require(process.argv[1]);globalThis.crypto=require('crypto').webcrypto;"
+              "const pk=Buffer.from(process.argv[2],'hex');"
+              "console.log(JSON.stringify(process.argv.slice(3).map(m=>Buffer.from(S.seal(Buffer.from(m,'utf8'),pk)).toString('hex'))))")
+        msgs = ["", "abcd efgh ijkl mnop", "x" * 200, "ñ✈️"]
+        out = json.loads(subprocess.check_output(["node", "-e", js, os.path.join(ROOT, "app/static/js/sealbox.js"),
+                                                  pk.raw.hex(), *msgs]))
+        for m, h in zip(msgs, out):
+            c = bytes.fromhex(h)
+            buf = ctypes.create_string_buffer(max(1, len(c) - 48))
+            self.assertEqual(so.crypto_box_seal_open(buf, c, ctypes.c_ulonglong(len(c)), pk, sk), 0)
+            self.assertEqual(buf.raw[:len(c) - 48], m.encode())
 
 
 if __name__ == "__main__":

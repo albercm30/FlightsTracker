@@ -61,22 +61,12 @@ function renderDetail() {
       <div id="bagBox"><div class="skel" style="height:80px"></div></div>
     </div>
 
-    ${o.trip === 'rt' && !S.static ? `<div><div class="row"><h3>📆 Prueba otras fechas</h3><span class="muted small">filas: ida · columnas: vuelta</span></div><div id="dGrid" style="margin-top:8px"><div class="skel" style="height:120px"></div></div></div>` : ''}
+    <div><h3>📈 Precio más barato de esta ruta, escaneo a escaneo</h3><div id="dHist" style="margin-top:8px"></div></div>
 
-    ${S.static ? '' : '<div><h3>📈 Cómo ha cambiado este precio</h3><div id="dHist" style="margin-top:8px"></div></div>'}
-
-    <details class="card pad ${S.static ? 'hidden' : ''}" style="box-shadow:none">
-      <summary style="cursor:pointer;font-weight:800">⚡ Precio real ahora en Google Flights</summary>
-      <div style="margin-top:12px">${S.status?.live_check ? `<div class="row"><select id="lcClass" style="width:auto"><option value="1">Turista</option><option value="2">Turista superior</option><option value="3">Business</option><option value="4">Primera</option></select>
-        <label class="check"><input type="checkbox" id="lcDirect"> Solo directos</label><button class="btn primary sm" id="liveBtn">Consultar</button></div>` : '<p class="small muted" style="margin:0">Añade una clave gratuita de SerpApi en Ajustes para activarlo.</p>'}
-      <div id="liveBox" style="margin-top:10px"></div></div>
-    </details>
-    <p class="tiny muted" style="margin:0">${o.provider === 'demo' || S.status?.provider === 'demo' ? '🎲 Precio simulado (modo demo).' : 'Precio de búsquedas recientes: confírmalo al reservar.'}</p>
+    <p class="tiny muted" style="margin:0">${S.status?.provider === 'demo' ? '🎲 Precio simulado (modo demo).' : 'Precio de búsquedas recientes: confírmalo al reservar.'}</p>
   </div>
   <div class="sh-foot">
     <button class="btn primary" id="bookBtn">${ic('ext')} Reservar</button>
-    <button class="btn ${S.static ? 'hidden' : ''}" id="watchBtn">${ic('eye')} Vigilar</button>
-    <input id="wTarget" class="${S.static ? 'hidden' : ''}" type="number" min="0" placeholder="Avísame a… ${sym()}" style="width:150px">
     <span class="spacer"></span>
     <button class="btn icon ghost" id="shareBtn" title="Compartir">${ic('share')}</button>
     <button class="btn icon ghost" id="icsBtn" title="Añadir al calendario">${ic('calendar')}</button>
@@ -101,71 +91,20 @@ function renderDetail() {
   $('#dPaxBag').addEventListener('change', updBag);
   updBag();
 
-  // cuadrícula ida x vuelta
-  if (o.trip === 'rt' && !S.static) {
-    api(`/api/grid?origin=${o.origin}&destination=${o.destination}&depart=${o.depart_date}&return=${o.return_date}`).then((g) => {
-      const cells = new Map(g.cells.map((c) => [`${c.depart}|${c.return}`, c]));
-      const prices = g.cells.map((c) => c.price);
-      if (!prices.length) { $('#dGrid').textContent = 'Sin combinaciones cercanas.'; return; }
-      const lo = Math.min(...prices), hi = Math.max(...prices), med = prices.slice().sort((a, b) => a - b)[Math.floor(prices.length / 2)];
-      let h = `<div class="matrix" style="grid-template-columns:80px repeat(${g.returns.length},1fr)"><div></div>${g.returns.map((r) => `<div class="h">${esc(dshort(r))}</div>`).join('')}`;
-      g.departs.forEach((d) => {
-        h += `<div class="h" style="text-align:left">${esc(dshort(d))}</div>`;
-        g.returns.forEach((r) => {
-          const c = cells.get(`${d}|${r}`);
-          if (!c) { h += '<div class="c none">—</div>'; return; }
-          const col = priceColor(c.price, med, lo, hi);
-          h += `<div class="c ${d === o.depart_date && r === o.return_date ? 'sel' : ''}" data-g="${d}|${r}|${c.price}|${c.airline || ''}" style="background:${col.bg};color:${col.fg}">${Math.round(c.price)}</div>`;
-        });
-      });
-      $('#dGrid').innerHTML = h + '</div>';
-      $('#dGrid').onclick = (e) => {
-        const c = e.target.closest('[data-g]'); if (!c) return;
-        const [d, r, pr, al] = c.dataset.g.split('|');
-        Object.assign(S.detail, { depart_date: d, return_date: r, price: +pr, airline: al || o.airline, airline_name: al ? (S.meta.airlines[al] || al) : o.airline_name, link: null, updated_at: null, prev_price: null, level: null });
-        renderDetail();
-      };
-    }).catch((e) => { $('#dGrid').textContent = e.message; });
-  }
-
-  // histórico del día
-  if (!S.static) api(`/api/quote-history?origin=${o.origin}&destination=${o.destination}&trip=${o.trip}&date=${o.depart_date}`).then((h) => {
-    chart($('#dHist'), [{ name: 'Precio', color: 'var(--series-1)', data: h.map((x) => ({ x: x.seen_at.slice(0, 16), y: x.price })) }],
-      { height: 170, xFmt: (x) => new Date(x).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) });
-    if (!h.length) $('#dHist').innerHTML = '<p class="muted small">Aún no hay histórico para esta fecha: se irá llenando con cada escaneo.</p>';
-  });
-
   // acciones
   $('#bookBtn').onclick = (e) => {
     e.stopPropagation();
     popMenu(e.currentTarget, [['Aviasales', L.aviasales], ['Skyscanner', L.skyscanner], ['Google Flights', L.google], ['Kayak', L.kayak]]
       .map(([n, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener">${ic('ext')} ${n}</a>`).join(''));
   };
-  $('#watchBtn').onclick = async () => {
-    try {
-      await api('/api/watches', { method: 'POST', body: { origin: o.origin, destination: o.destination, date: o.depart_date, return_date: o.return_date || '', price: o.price, target_price: $('#wTarget').value } });
-      toast('👀 Vigilando este vuelo: te avisaremos si cambia'); refreshStatus();
-    } catch (err) { toast(err.message); }
-  };
   $('#shareBtn').onclick = () => shareText('Vuelo barato', `✈️ ${o.origin} → ${info.name}: ${money(o.price)} ${o.return_date ? `ida y vuelta (${dshort(o.depart_date)} – ${dshort(o.return_date)})` : `solo ida (${dshort(o.depart_date)})`}`, L.google);
   $('#icsBtn').onclick = () => download(`vuelo_${o.origin}_${o.destination}_${o.depart_date}.ics`,
     icsEvent({ title: `✈️ ${o.origin} → ${info.name}`, start: o.depart_date, end: o.return_date, desc: `Precio visto: ${money(o.price)} por persona\nReservar: ${L.aviasales}`, url: L.google }), 'text/calendar');
-  const lb = $('#liveBtn');
-  if (lb) lb.onclick = async () => {
-    lb.disabled = true; $('#liveBox').innerHTML = '<div class="skel" style="height:60px"></div>';
-    try {
-      const { pax: pp, baggage } = readPaxBag($('#dPaxBag'));
-      const r = await api('/api/live-check', { method: 'POST', body: { origin: o.origin, destination: o.destination, date: o.depart_date, return_date: o.return_date, pax: pp, baggage, travel_class: $('#lcClass').value, direct_only: $('#lcDirect').checked } });
-      const lv = { low: ['bajo', 'good'], typical: ['normal', 'warn'], high: ['alto', 'bad'] }[r.price_level] || [r.price_level || '—', 'neutral'];
-      $('#liveBox').innerHTML = `<div class="row"><div class="bigprice" style="font-size:2rem">${money(r.lowest_price)}</div><span class="pill ${lv[1]}">Google: precio ${esc(lv[0])}</span>
-        ${r.typical_range ? `<span class="small muted">Rango habitual ${money(r.typical_range[0])} – ${money(r.typical_range[1])}</span>` : ''}</div>
-        ${r.advice ? `<div style="margin-top:12px">${verdictBox(r.advice)}</div>` : ''}
-        ${r.history.length ? '<h3 style="margin-top:12px">Historial de Google Flights</h3><div id="gHist"></div>' : ''}
-        <div class="table-wrap" style="margin-top:12px"><table><tr><th>Precio</th><th>Aerolínea</th><th>Escalas</th><th>Salida</th><th>Duración</th><th>Detalles</th></tr>
-        ${r.flights.map((f) => `<tr><td><b>${money(f.price)}</b></td><td>${esc(f.airlines.join(', '))}</td><td>${f.stops || 'Directo'}</td><td>${esc((f.departure || '').slice(-5))}</td><td>${f.duration_min ? Math.floor(f.duration_min / 60) + 'h ' + (f.duration_min % 60) + 'm' : ''}</td><td class="tiny">${esc((f.extensions || []).join(' · '))}</td></tr>`).join('')}</table></div>
-        ${r.google_url ? `<p><a href="${esc(r.google_url)}" target="_blank" rel="noopener">${ic('ext')} Abrir esta búsqueda en Google Flights</a></p>` : ''}`;
-      if (r.history.length) chart($('#gHist'), [{ name: 'Google', color: 'var(--series-1)', data: r.history.map((h) => ({ x: new Date(h.t * 1000).toISOString().slice(0, 10), y: h.price })) }], { height: 160, xFmt: (x) => dshort(x) });
-    } catch (err) { $('#liveBox').innerHTML = `<span style="color:var(--bad)">${esc(err.message)}</span>`; }
-    lb.disabled = false;
-  };
+  // cómo ha cambiado el precio mínimo de esta ruta en los últimos escaneos
+  api(`/api/history?origin=${o.origin}&destination=${o.destination}&trip=${o.trip}`).then((h) => {
+    const box = $('#dHist'); if (!box) return;
+    if (h.length < 2) { box.innerHTML = '<p class="muted small">Se irá llenando con cada escaneo.</p>'; return; }
+    chart(box, [{ name: 'Mínimo de la ruta', color: 'var(--series-1)', data: h.map((x) => ({ x: x.scanned_at.slice(0, 16), y: x.min_price })) }],
+      { height: 160, xFmt: (x) => new Date(x).toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }) });
+  }).catch(() => {});
 }

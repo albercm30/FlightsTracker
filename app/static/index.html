@@ -28,16 +28,15 @@
       <a href="#explore" data-view="explore"><span data-icon="compass"></span>Explorar</a>
       <a href="#holidays" data-view="holidays"><span data-icon="sun"></span>Puentes y festivos</a>
       <a href="#calendar" data-view="calendar"><span data-icon="calendar"></span>Calendario</a>
-      <a href="#watches" data-view="watches"><span data-icon="eye"></span>Vigilados <span class="count hidden" data-count="watches"></span></a>
       <a href="#destinations" data-view="destinations"><span data-icon="star"></span>Mis destinos</a>
-      <a href="#alerts" data-view="alerts"><span data-icon="bell"></span>Alertas <span class="count hidden" data-count="alerts"></span></a>
+      <a href="#alerts" data-view="alerts"><span data-icon="bell"></span>Alertas </a>
       <a href="#settings" data-view="settings"><span data-icon="settings"></span>Ajustes</a>
     </nav>
     <div class="foot">
       <div id="sideStatus">—</div>
       <button class="btn sm" id="scanBtn"><span data-icon="refresh"></span>Escanear ahora</button>
       <div class="row"><button class="btn ghost sm" id="themeBtn" title="Tema"><span data-icon="moon"></span>Tema</button>
-        <button class="btn ghost sm hidden" id="logoutBtn"><span data-icon="logout"></span>Salir</button></div>
+</div>
     </div>
   </aside>
 
@@ -50,13 +49,11 @@
     </header>
     <div class="content">
       <div id="banners"></div>
-      <div class="scanbar hidden" id="scanbar"><span class="small muted nowrap" id="scanText"></span><div class="progress"><div></div></div></div>
-      <section class="view" id="view-home"></section>
+            <section class="view" id="view-home"></section>
       <section class="view" id="view-search"></section>
       <section class="view" id="view-explore"></section>
       <section class="view" id="view-holidays"></section>
       <section class="view" id="view-calendar"></section>
-      <section class="view" id="view-watches"></section>
       <section class="view" id="view-destinations"></section>
       <section class="view" id="view-alerts"></section>
       <section class="view" id="view-settings"></section>
@@ -68,7 +65,7 @@
   <a href="#home" data-view="home"><span data-icon="home"></span>Inicio</a>
   <a href="#search" data-view="search"><span data-icon="search"></span>Buscar</a>
   <a href="#explore" data-view="explore"><span data-icon="compass"></span>Explorar</a>
-  <a href="#alerts" data-view="alerts"><span data-icon="bell"></span>Alertas<span class="count hidden" data-count="alerts"></span></a>
+  <a href="#alerts" data-view="alerts"><span data-icon="bell"></span>Alertas</a>
   <a href="#more" data-view="more"><span data-icon="menu"></span>Más</a>
 </nav>
 
@@ -76,6 +73,7 @@
 <div class="toast hidden" id="toast"></div>
 
 <script src="/static/js/core.js"></script>
+<script src="/static/js/sealbox.js"></script>
 <script src="/static/js/static-mode.js"></script>
 <script src="/static/js/detail.js"></script>
 <script src="/static/js/views.js"></script>

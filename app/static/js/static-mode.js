@@ -1,8 +1,8 @@
-/* Flight Tracker — «modo estático»: la web pública de solo lectura (GitHub Pages).
-   Sustituye las llamadas a /api por ficheros JSON generados en cada escaneo y hace
-   en el navegador los cálculos que en la app local hace el servidor. */
+/* Flight Tracker — capa de datos de la web (GitHub Pages).
+   Las llamadas a /api se resuelven con los ficheros JSON que GitHub genera en cada escaneo,
+   y las búsquedas, el equipaje y el descuento de residente se calculan aquí, en el navegador. */
 'use strict';
-S.static = !!window.STATIC;
+S.static = true;
 
 const SD = { cache: {} };
 async function sdGet(file, fallback) {
@@ -11,65 +11,16 @@ async function sdGet(file, fallback) {
     const r = await fetch(`data/${file}`, { cache: 'no-cache' });
     if (!r.ok) throw new Error(r.status);
     let j = await r.json();
-    if (j && typeof j.enc === 'string') j = JSON.parse(new TextDecoder().decode(await decB64(j.enc)));
     SD.cache[file] = j;
   } catch (e) { SD.cache[file] = fallback; }
   return SD.cache[file];
 }
 
-/* ---------- web privada: contraseña una vez por dispositivo (mismo cifrado que app/sitecrypt.py) ---------- */
-const LOCK = { key: null, info: null, admin: null };
-const b64d = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-const b64e = (u8) => { let s = ''; u8.forEach((b) => { s += String.fromCharCode(b); }); return btoa(s); };
-async function deriveRaw(pw, info) {
-  const base = await crypto.subtle.importKey('raw', new TextEncoder().encode(pw), 'PBKDF2', false, ['deriveBits']);
-  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'PBKDF2', hash: 'SHA-256', salt: b64d(info.salt), iterations: info.iter }, base, 256));
-}
-async function decB64(b64) { const r = b64d(b64); return new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: r.slice(0, 12) }, LOCK.key, r.slice(12))); }
-async function encJson(obj) {
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, LOCK.key, new TextEncoder().encode(JSON.stringify(obj))));
-  const o = new Uint8Array(12 + ct.length); o.set(iv); o.set(ct, 12); return b64e(o);
-}
-async function tryKey(raw) {
-  try {
-    LOCK.key = await crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
-    return new TextDecoder().decode(await decB64(LOCK.info.check)) === 'flight-tracker-ok';
-  } catch (e) { LOCK.key = null; return false; }
-}
-function siteLogout() { try { localStorage.removeItem('ft-key'); } catch (e) { /* */ } location.reload(); }
-/* Devuelve cuando la web está lista (pública, o privada y desbloqueada). */
-async function siteUnlock() {
-  try { const r = await fetch('data/lock.json', { cache: 'no-cache' }); if (!r.ok) return; LOCK.info = await r.json(); } catch (e) { return; }
-  S.private = true;
-  let saved = null; try { saved = localStorage.getItem('ft-key'); } catch (e) { /* */ }
-  if (!(saved && await tryKey(b64d(saved)))) {
-    await new Promise((resolve) => {
-      const el = document.createElement('div'); el.className = 'lockscreen';
-      el.innerHTML = `<form class="card pad lockbox" autocomplete="on"><div class="logo" style="justify-content:center"><span class="mark" data-icon="plane"></span>${esc(document.title)}</div>
-        <h2 style="text-align:center;margin:14px 0 4px">🔒 Tu web privada</h2><p class="small muted" style="text-align:center;margin:0 0 14px">Escribe tu contraseña. Este dispositivo la recordará.</p>
-        <input type="text" name="username" value="flight-tracker" autocomplete="username" hidden>
-        <input type="password" id="lockPw" autocomplete="current-password" placeholder="Contraseña" required autofocus>
-        <button class="btn primary" style="width:100%;margin-top:10px">Entrar</button><p class="small" id="lockMsg" style="text-align:center;margin:10px 0 0;min-height:1.2em"></p></form>`;
-      document.body.appendChild(el); paintIcons(el);
-      $('form', el).onsubmit = async (e) => {
-        e.preventDefault(); $('#lockMsg').textContent = 'Comprobando…';
-        const raw = await deriveRaw($('#lockPw').value, LOCK.info);
-        if (await tryKey(raw)) { try { localStorage.setItem('ft-key', b64e(raw)); } catch (err) { /* */ } el.remove(); resolve(); }
-        else { $('#lockMsg').textContent = '❌ Contraseña incorrecta'; $('#lockPw').select(); }
-      };
-    });
-  }
-  LOCK.admin = await sdGet('admin.json', null);
-}
-
-/* ---------- preferencias del visitante (se guardan solo en su navegador) ---------- */
+/* ---------- tus ajustes (viajeros, equipaje, residente): vienen de GitHub en settings.json ---------- */
 function prefs() {
-  let p = {};
-  try { p = JSON.parse(localStorage.getItem('ft-prefs') || '{}'); } catch (e) { /* sin almacenamiento */ }
-  return { resident_discount: p.resident_discount || '', passengers: +p.passengers || null, baggage: p.baggage || null };
+  const s = S.settings || {};
+  return { resident_discount: s.resident_discount || '', passengers: +s.passengers || 1, baggage: s.baggage || 'personal' };
 }
-function savePrefs(p) { try { localStorage.setItem('ft-prefs', JSON.stringify(p)); } catch (e) { /* */ } }
 
 /* ---------- distancia / equipaje / residente (mismo cálculo que el servidor) ---------- */
 function distKm(a, b) {
@@ -257,12 +208,9 @@ async function staticApi(path, opts = {}) {
   const [base, qs] = path.split('?'); const q = new URLSearchParams(qs || '');
   const method = (opts.method || 'GET').toUpperCase();
   const body = opts.body ? (typeof opts.body === 'string' ? JSON.parse(opts.body) : opts.body) : {};
-  const settingsMerged = async () => { const s = await sdGet('settings.json', {}); const pr = prefs(); return { ...s, ...Object.fromEntries(Object.entries(pr).filter(([, v]) => v)), resident_discount: pr.resident_discount }; };
   switch (base) {
     case '/api/status': return sdGet('status.json', {});
-    case '/api/settings':
-      if (method === 'PUT') { savePrefs({ resident_discount: body.resident_discount || '', passengers: body.passengers, baggage: body.baggage }); SD.hyd = null; }
-      return settingsMerged();
+    case '/api/settings': return sdGet('settings.json', {});
     case '/api/meta': return sdGet('meta.json', {});
     case '/api/catalog': return sdGet('catalog.json', []);
     case '/api/catalog/countries': return sdGet('countries.json', []);

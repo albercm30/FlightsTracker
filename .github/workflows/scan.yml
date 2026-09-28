@@ -1,11 +1,9 @@
-# Escaneos y avisos GRATIS en GitHub Actions (sin servidor y con tu PC apagado).
-# Configuración rápida: ejecuta scripts/configurar-github-actions.ps1 (o sigue DEPLOY.md, sección 0).
-#   Secrets:   TRAVELPAYOUTS_TOKEN, NTFY_TOPIC (y/o TELEGRAM_BOT_TOKEN + TELEGRAM_CHAT_ID)
-#   Variables: ORIGINS, DESTINATIONS, ENABLE_SCHEDULED_SCAN=true
-#              opcionales: TRIP_TYPE, MIN_NIGHTS, MAX_NIGHTS, PASSENGERS, BAGGAGE, RESIDENT_DISCOUNT,
-#                          QUIET_HOURS, TZ, MONTHS_AHEAD, DIRECT_ONLY, DEAL_PCT, MIN_DAYS_AHEAD
-# La base de datos (historial, anti-spam) se guarda entre ejecuciones en la caché de Actions.
-# Repos públicos: minutos ilimitados en runners estándar. Privados: 2.000 min/mes gratis.
+# Tu Flight Tracker funciona entero aquí, gratis:
+#   1) busca los precios de tus destinos cada 6 horas
+#   2) te manda por email solo las ofertas que merecen la pena
+#   3) publica tu web en GitHub Pages
+# Todo se configura desde tu web (Ajustes): guarda tus ajustes como variables/secrets de este repositorio.
+# La base de datos (historial de precios y avisos ya enviados) se conserva entre ejecuciones en la caché.
 name: Escaneo programado
 
 on:
@@ -14,11 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       demo:
-        description: "Probar con precios SIMULADOS (sirve para comprobar que te llegan los avisos)"
+        description: "Probar con precios SIMULADOS"
         type: boolean
         default: false
       test:
-        description: "Solo enviar un aviso de prueba (email / notificación), sin escanear"
+        description: "Solo enviarme un email de prueba"
         type: boolean
         default: false
 
@@ -28,7 +26,7 @@ concurrency:
 
 permissions:
   contents: read
-  pages: write       # publicar la web pública en GitHub Pages
+  pages: write       # publicar tu web en GitHub Pages
   id-token: write
 
 jobs:
@@ -38,24 +36,44 @@ jobs:
     timeout-minutes: 60
     env:
       DB_PATH: data/flights.db
-      DISABLE_SCHEDULER: "1"
-      PRICE_PROVIDER: ${{ inputs.demo && 'demo' || 'travelpayouts' }}
+      PRICE_PROVIDER: ${{ inputs.demo && 'demo' || 'auto' }}   # sin clave de Travelpayouts -> precios simulados
       CACHE_PREFIX: ${{ inputs.demo && 'flights-db-demo-' || 'flights-db-' }}
+      # --- tus ajustes (se cambian desde la web) ---
+      TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
+      EMAIL_TO: ${{ vars.EMAIL_TO || secrets.EMAIL_TO }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_USER: ${{ secrets.SMTP_USER }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      SITE_URL: ${{ vars.SITE_URL }}
+      ORIGINS: ${{ vars.ORIGINS }}
+      DESTINATIONS: ${{ vars.DESTINATIONS }}
+      TRIP_TYPE: ${{ vars.TRIP_TYPE || 'rt' }}
+      MIN_NIGHTS: ${{ vars.MIN_NIGHTS }}
+      MAX_NIGHTS: ${{ vars.MAX_NIGHTS }}
+      PASSENGERS: ${{ vars.PASSENGERS }}
+      BAGGAGE: ${{ vars.BAGGAGE }}
+      RESIDENT_DISCOUNT: ${{ vars.RESIDENT_DISCOUNT }}
+      QUIET_HOURS: ${{ vars.QUIET_HOURS }}
+      MONTHS_AHEAD: ${{ vars.MONTHS_AHEAD }}
+      MIN_DAYS_AHEAD: ${{ vars.MIN_DAYS_AHEAD }}
+      ALERT_LEVEL: ${{ vars.ALERT_LEVEL }}
+      ALERT_DROPS: ${{ vars.ALERT_DROPS }}
+      MAX_STOPS: ${{ vars.MAX_STOPS }}
+      MAX_DURATION_H: ${{ vars.MAX_DURATION_H }}
+      DEP_WINDOWS: ${{ vars.DEP_WINDOWS }}
+      EXCLUDE_AIRLINES: ${{ vars.EXCLUDE_AIRLINES }}
+      TZ: ${{ vars.TZ || 'Europe/Madrid' }}
     steps:
       - uses: actions/checkout@v4
 
       - name: Comprobar configuración
-        env:
-          HAS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN != '' }}
-          HAS_NOTIFY: ${{ secrets.PUSH_SUBSCRIPTIONS != '' || secrets.EMAIL_TO != '' || vars.EMAIL_CONFIG_ENC != '' || secrets.NTFY_TOPIC != '' || secrets.TELEGRAM_BOT_TOKEN != '' }}
-          ORIGINS: ${{ vars.ORIGINS }}
-          DESTINATIONS: ${{ vars.DESTINATIONS }}
         run: |
           ok=1
-          if [ -z "$ORIGINS" ]; then echo "::error::Falta la variable ORIGINS (p. ej. TCI,LPA,MAD)"; ok=0; fi
-          if [ -z "$DESTINATIONS" ]; then echo "::error::Falta la variable DESTINATIONS (p. ej. LON,ROM,NYC)"; ok=0; fi
-          if [ "$PRICE_PROVIDER" = "travelpayouts" ] && [ "$HAS_TOKEN" != "true" ] && [ "${{ inputs.test }}" != "true" ]; then echo "::error::Falta el secret TRAVELPAYOUTS_TOKEN (gratis en travelpayouts.com). Para probar sin él, lanza el workflow con 'demo' activado."; ok=0; fi
-          if [ "$HAS_NOTIFY" != "true" ]; then echo "::warning::No hay canal de avisos (notificaciones de la app o email): se escaneará pero no recibirás nada."; fi
+          if [ -z "$ORIGINS" ] && [ "${{ inputs.test }}" != "true" ]; then echo "::error::Aún no has elegido desde dónde sales. Abre tu web → Ajustes."; ok=0; fi
+          if [ -z "$DESTINATIONS" ] && [ "${{ inputs.test }}" != "true" ]; then echo "::error::Aún no tienes destinos. Abre tu web → Mis destinos."; ok=0; fi
+          if [ -z "$TRAVELPAYOUTS_TOKEN" ]; then echo "::warning::Sin clave de Travelpayouts: se usan precios SIMULADOS. Añádela en tu web → Ajustes."; fi
+          if [ -z "$EMAIL_TO" ] || [ -z "$SMTP_PASSWORD" ]; then echo "::warning::Sin email configurado: no recibirás avisos. Configúralo en tu web → Ajustes."; fi
           [ $ok = 1 ]
 
       - uses: actions/setup-python@v5
@@ -71,57 +89,17 @@ jobs:
           key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
           restore-keys: ${{ env.CACHE_PREFIX }}
 
-      - name: Escanear y avisar
-        env:
-          TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
-          TRAVELPAYOUTS_MARKER: ${{ secrets.TRAVELPAYOUTS_MARKER }}
-          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          SMTP_FROM: ${{ secrets.SMTP_FROM }}
-          VAPID_PRIVATE_KEY: ${{ secrets.VAPID_PRIVATE_KEY }}
-          PUSH_SUBSCRIPTIONS: ${{ secrets.PUSH_SUBSCRIPTIONS }}
-          VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
-          SITE_URL: ${{ vars.SITE_URL }}
-          ORIGINS: ${{ vars.ORIGINS }}
-          DESTINATIONS: ${{ vars.DESTINATIONS }}
-          TRIP_TYPE: ${{ vars.TRIP_TYPE || 'rt' }}
-          MIN_NIGHTS: ${{ vars.MIN_NIGHTS }}
-          MAX_NIGHTS: ${{ vars.MAX_NIGHTS }}
-          PASSENGERS: ${{ vars.PASSENGERS }}
-          BAGGAGE: ${{ vars.BAGGAGE }}
-          RESIDENT_DISCOUNT: ${{ vars.RESIDENT_DISCOUNT }}
-          QUIET_HOURS: ${{ vars.QUIET_HOURS }}
-          MONTHS_AHEAD: ${{ vars.MONTHS_AHEAD }}
-          DIRECT_ONLY: ${{ vars.DIRECT_ONLY }}
-          DEAL_PCT: ${{ vars.DEAL_PCT }}
-          MIN_DAYS_AHEAD: ${{ vars.MIN_DAYS_AHEAD }}
-          ALERT_LEVEL: ${{ vars.ALERT_LEVEL }}
-          ALERT_DROPS: ${{ vars.ALERT_DROPS }}
-          MAX_STOPS: ${{ vars.MAX_STOPS }}
-          MAX_DURATION_H: ${{ vars.MAX_DURATION_H }}
-          DEP_WINDOWS: ${{ vars.DEP_WINDOWS }}
-          EXCLUDE_AIRLINES: ${{ vars.EXCLUDE_AIRLINES }}
-          TZ: ${{ vars.TZ || 'Europe/Madrid' }}
-          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}
-          EMAIL_CONFIG_ENC: ${{ vars.EMAIL_CONFIG_ENC }}
+      - name: ${{ inputs.test && 'Enviar email de prueba' || 'Escanear y avisar' }}
         run: python -m app ${{ inputs.test && 'test-notify' || 'scan' }}
 
-      - name: Generar web pública
-        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo && !inputs.test
+      - name: Generar tu web
+        if: success() && !inputs.demo && !inputs.test
         env:
           SITE_TITLE: ${{ vars.SITE_TITLE }}
-          VAPID_PUBLIC_KEY: ${{ vars.VAPID_PUBLIC_KEY }}
-          SITE_PASSWORD: ${{ secrets.SITE_PASSWORD }}       # web privada con contraseña
-          SITE_ADMIN_TOKEN: ${{ secrets.SITE_ADMIN_TOKEN }} # se publica CIFRADO con esa contraseña
         run: python -m app export site
 
-      - name: Subir web pública
-        if: success() && vars.PUBLISH_SITE == 'true' && !inputs.demo && !inputs.test
+      - name: Subir tu web
+        if: success() && !inputs.demo && !inputs.test
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
@@ -133,10 +111,10 @@ jobs:
           path: data/flights.db
           key: ${{ env.CACHE_PREFIX }}${{ github.run_id }}
 
-  # Publica la web de solo lectura en https://<usuario>.github.io/<repositorio>/
+  # Publica tu web en https://<usuario>.github.io/<repositorio>/
   deploy:
     needs: scan
-    if: vars.PUBLISH_SITE == 'true' && !inputs.demo && !inputs.test
+    if: ${{ !inputs.demo && !inputs.test }}
     runs-on: ubuntu-latest
     environment:
       name: github-pages

@@ -1,20 +1,24 @@
-"""Envío de avisos: Telegram, ntfy (push al móvil) y email."""
+"""Avisos por email (Gmail u otro SMTP): un único resumen por escaneo con las mejores ofertas."""
 import html
-import json
 import logging
-import os
 import smtplib
 import ssl
+from datetime import date
 from email.message import EmailMessage
 
-import requests
-
-from . import db
+from . import airlines, catalog, db
 from .providers import booking_links
 
 log = logging.getLogger(__name__)
 
-EMOJI = {"record": "🏆", "deal": "🔥", "target": "🎯", "drop": "📉", "watch_down": "👀📉", "watch_up": "👀📈"}
+EMOJI = {"record": "🏆", "deal": "🔥", "target": "🎯", "drop": "📉"}
+KIND = {"record": "Mínimo histórico", "deal": "Chollo", "target": "Bajo tu precio", "drop": "Bajada"}
+_DAYS = ["lun", "mar", "mié", "jue", "vie", "sáb", "dom"]
+_MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
+
+
+def email_ready(s: dict) -> bool:
+    return bool(s.get("email_to") and s.get("smtp_password"))
 
 
 def in_quiet_hours(s: dict, now=None) -> bool:
@@ -32,181 +36,113 @@ def in_quiet_hours(s: dict, now=None) -> bool:
     return (a <= h < b) if a < b else (h >= a or h < b)
 
 
-def push_subs(s: dict):
-    from .webpush import parse_subscriptions
-    return parse_subscriptions(s.get("push_subscriptions")) if s.get("vapid_private") and s.get("vapid_public") else []
-
-
-def send_push(s: dict, title: str, body: str, url: str = "", urgency: str = "normal") -> str:
-    from . import db
-    from .webpush import send
-    subs = push_subs(s)
-    ok, gone = 0, []
-    subject = f"mailto:{s.get('email_to') or s.get('smtp_from') or 'flight-tracker@example.com'}"
-    for sub in subs:
-        try:
-            code = send(sub, {"title": title, "body": body, "url": url or s.get("site_url") or "./", "tag": "flight-deals"},
-                        s["vapid_private"], s["vapid_public"], subject=subject, urgency=urgency)
-        except Exception as e:  # noqa: BLE001
-            log.warning("Push fallido: %s", e)
-            continue
-        if code in (200, 201, 202):
-            ok += 1
-        elif code in (404, 410):
-            gone.append(sub["endpoint"])
-    if gone and not os.environ.get("GITHUB_ACTIONS"):
-        keep = [x for x in subs if x["endpoint"] not in gone]
-        db.update_settings({"push_subscriptions": json.dumps(keep)})
-    if not ok:
-        raise RuntimeError(f"ningún dispositivo aceptó el aviso ({len(subs)} suscritos, {len(gone)} caducados)")
-    return f"ok ({ok} dispositivo{'s' if ok > 1 else ''})"
-
-
-def enabled_channels(s: dict):
-    ch = []
-    if push_subs(s):
-        ch.append("push")
-    if s.get("telegram_bot_token") and s.get("telegram_chat_id"):
-        ch.append("telegram")
-    if s.get("ntfy_topic"):
-        ch.append("ntfy")
-    if s.get("smtp_host") and s.get("email_to"):
-        ch.append("email")
-    return ch
-
-
-def _sorted(alerts):
-    prio = {"watch_down": 5, "record": 4, "deal": 3, "target": 2, "drop": 1, "watch_up": 0}
-    return sorted(alerts, key=lambda a: (-prio.get(a["kind"], 0), -(a.get("savings") or 0)))
-
-
-def send_telegram(s, text_html: str):
-    url = f"https://api.telegram.org/bot{s['telegram_bot_token']}/sendMessage"
-    r = requests.post(url, json={"chat_id": s["telegram_chat_id"], "text": text_html, "parse_mode": "HTML",
-                                 "disable_web_page_preview": True}, timeout=20)
-    r.raise_for_status()
-
-
-def send_ntfy(s, title: str, body: str, click: str = "", priority: str = "default"):
-    server = (s.get("ntfy_server") or "https://ntfy.sh").rstrip("/")
-    payload = {"topic": s["ntfy_topic"], "title": title, "message": body, "tags": ["airplane"],
-               "priority": {"high": 4, "default": 3}.get(priority, 3)}
-    if click:
-        payload["click"] = click
-    r = requests.post(server, json=payload, timeout=20)  # publicación JSON (admite UTF-8)
-    r.raise_for_status()
-
-
 def send_email(s, subject: str, text: str, html_body: str):
+    to = s["email_to"].strip()
+    user = s.get("smtp_user") or to
     msg = EmailMessage()
     msg["Subject"] = subject
-    msg["From"] = s.get("smtp_from") or s.get("smtp_user")
-    msg["To"] = s["email_to"]
+    msg["From"] = f"Flight Tracker <{s.get('smtp_from') or user}>"
+    msg["To"] = to
     msg.set_content(text)
     msg.add_alternative(html_body, subtype="html")
-    port = int(s.get("smtp_port") or 587)
+    host, port = s.get("smtp_host") or "smtp.gmail.com", int(s.get("smtp_port") or 587)
     ctx = ssl.create_default_context()
+    pw = (s.get("smtp_password") or "").replace(" ", "")
     if port == 465:
-        with smtplib.SMTP_SSL(s["smtp_host"], port, context=ctx, timeout=30) as srv:
-            if s.get("smtp_user"):
-                srv.login(s["smtp_user"], s.get("smtp_password", ""))
+        with smtplib.SMTP_SSL(host, port, context=ctx, timeout=30) as srv:
+            srv.login(user, pw)
             srv.send_message(msg)
     else:
-        with smtplib.SMTP(s["smtp_host"], port, timeout=30) as srv:
+        with smtplib.SMTP(host, port, timeout=30) as srv:
             srv.starttls(context=ctx)
-            if s.get("smtp_user"):
-                srv.login(s["smtp_user"], s.get("smtp_password", ""))
+            srv.login(user, pw)
             srv.send_message(msg)
 
 
-def _links(a):
+def _d(iso):
+    d = date.fromisoformat(iso)
+    return f"{_DAYS[d.weekday()]} {d.day} {_MONTHS[d.month - 1]}"
+
+
+def _dur(m):
+    if not m:
+        return ""
+    h, mm = divmod(int(m), 60)
+    return f"{h} h {mm:02d}" if mm else f"{h} h"
+
+
+def _card(a, site_url):
+    q = db.one("SELECT * FROM quotes WHERE origin=? AND destination=? AND trip=? AND depart_date=?",
+               (a["origin"], a["destination"], a["trip"], a["depart_date"])) or {}
+    info = catalog.info(a["destination"])
     links = booking_links(a["origin"], a["destination"], a["depart_date"], a.get("return_date"))
-    return a.get("link") or links["aviasales"], links
+    main = a.get("link") or links["aviasales"]
+    when = _d(a["depart_date"]) + (f" → {_d(a['return_date'])}" if a.get("return_date") else " · solo ida")
+    stops = q.get("transfers")
+    facts = [when]
+    if stops is not None:
+        facts.append("directo" if stops == 0 else f"{stops} escala{'s' if stops > 1 else ''}")
+    if q.get("duration"):
+        facts.append(f"⏱ {_dur(q['duration'])}")
+    if q.get("dep_time"):
+        facts.append(f"sale {q['dep_time']}")
+    if q.get("airline"):
+        facts.append(airlines.name(q["airline"]))
+    pct = round((a.get("savings") or 0) * 100)
+    badge = (f"<span style='background:#e1f5ec;color:#0b7f55;border-radius:99px;padding:2px 8px;font-weight:700'>"
+             f"−{pct}%</span>") if pct >= 5 else ""
+    web = f" · <a href='{html.escape(site_url)}#alerts'>Ver en tu web</a>" if site_url else ""
+    return (f"<tr><td style='padding:14px 16px;border-bottom:1px solid #e2e7f0'>"
+            f"<div style='font-size:13px;color:#5d677c'>{EMOJI.get(a['kind'], '✈️')} {KIND.get(a['kind'], '')} · "
+            f"desde {html.escape(a['origin'])}</div>"
+            f"<div style='font-size:18px;font-weight:800;margin:2px 0'>{html.escape(info['name'])} "
+            f"<span style='color:#3656f5'>{round(a['price'])} €</span> {badge}</div>"
+            f"<div style='font-size:13px;color:#3d4659'>{html.escape(' · '.join(facts))}</div>"
+            f"<div style='font-size:13px;margin-top:6px'><a href='{html.escape(main)}'><b>Reservar</b></a> · "
+            f"<a href='{html.escape(links['google'])}'>Google Flights</a> · "
+            f"<a href='{html.escape(links['skyscanner'])}'>Skyscanner</a>{web}</div></td></tr>")
 
 
 def send_digest(alerts, settings=None) -> dict:
-    """Envía un único resumen con las mejores alertas del escaneo."""
+    """Un único email por escaneo con las mejores ofertas (ya filtradas por el anti-spam)."""
     s = settings or db.get_settings()
-    channels = enabled_channels(s)
-    if not alerts or not channels:
+    if not alerts or not email_ready(s):
         return {}
     if in_quiet_hours(s):
         return {"skipped": "horas de silencio"}
-    top = _sorted(alerts)[: int(s.get("notify_max_items", 10))]
-    rest = len(alerts) - len(top)
-    title = f"✈️ {len(alerts)} oferta(s) de vuelos"
+    prio = {"record": 4, "deal": 3, "target": 2, "drop": 1}
+    top = sorted(alerts, key=lambda a: (-prio.get(a["kind"], 0), -(a.get("savings") or 0)))[: int(s.get("notify_max_items", 10))]
+    best = top[0]
+    name = catalog.info(best["destination"])["name"]
+    title = (f"✈️ {name} por {round(best['price'])} €" + (f" y {len(alerts) - 1} oferta(s) más" if len(alerts) > 1 else ""))
     if s.get("provider") == "demo":
         title = "[DEMO · precios simulados] " + title
-
-    tg_lines = [f"<b>{html.escape(title)}</b>", ""]
-    txt_lines = []
-    html_items = []
-    for a in top:
-        main, links = _links(a)
-        e = EMOJI.get(a["kind"], "✈️")
-        tg_lines.append(f"{e} {html.escape(a['message'])}\n"
-                        f"<a href=\"{html.escape(main)}\">Ver</a> · <a href=\"{html.escape(links['google'])}\">Google Flights</a>"
-                        f" · <a href=\"{html.escape(links['skyscanner'])}\">Skyscanner</a>")
-        txt_lines.append(f"{e} {a['message']}\n   {main}")
-        html_items.append(f"<li style='margin-bottom:10px'>{e} {html.escape(a['message'])}<br>"
-                          f"<a href='{html.escape(main)}'>Ver oferta</a> · "
-                          f"<a href='{html.escape(links['google'])}'>Google Flights</a> · "
-                          f"<a href='{html.escape(links['skyscanner'])}'>Skyscanner</a></li>")
-    if rest > 0:
-        tg_lines.append(f"\n…y {rest} más en la app.")
-        txt_lines.append(f"…y {rest} más en la app.")
-    result = {}
-    for ch in channels:
-        try:
-            if ch == "push":
-                first_link, _ = _links(top[0])
-                short = [f"{EMOJI.get(a['kind'], '✈️')} {a['origin']}→{a['destination']} {round(a['price'])} €"
-                         + (f" (−{round(a['savings'] * 100)}%)" if a.get("savings", 0) > 0.05 else "") for a in top[:4]]
-                url = (s.get("site_url") or "").rstrip("/") + "/#alerts" if s.get("site_url") else first_link
-                result[ch] = send_push(s, title, "\n".join(short) + (f"\n…y {len(alerts) - 4} más" if len(alerts) > 4 else ""),
-                                       url, "high" if any(a["kind"] in ("record", "deal") for a in top) else "normal")
-                continue
-            if ch == "telegram":
-                send_telegram(s, "\n\n".join(tg_lines))
-            elif ch == "ntfy":
-                first_link, _ = _links(top[0])
-                prio = "high" if any(a["kind"] in ("record", "deal") for a in top) else "default"
-                send_ntfy(s, title, "\n\n".join(txt_lines), click=first_link, priority=prio)
-            elif ch == "email":
-                html_body = (f"<h2>{html.escape(title)}</h2><ul style='font-family:sans-serif'>"
-                             + "".join(html_items) + "</ul>"
-                             + (f"<p>…y {rest} más en la app.</p>" if rest > 0 else ""))
-                send_email(s, title, "\n\n".join(txt_lines), html_body)
-            result[ch] = "ok"
-        except Exception as e:  # noqa: BLE001
-            log.warning("Fallo enviando por %s: %s", ch, e)
-            result[ch] = f"error: {e}"
-    if any(str(v).startswith("ok") for v in result.values()):
+    site = (s.get("site_url") or "").rstrip("/") + "/" if s.get("site_url") else ""
+    html_body = ("<div style='font-family:-apple-system,Segoe UI,Roboto,sans-serif;max-width:560px;margin:auto'>"
+                 f"<h2 style='margin:0 0 12px'>{html.escape(title)}</h2>"
+                 "<table style='width:100%;border-collapse:collapse;background:#fff;border:1px solid #e2e7f0;"
+                 "border-radius:12px'>" + "".join(_card(a, site) for a in top) + "</table>"
+                 "<p style='font-size:12px;color:#5d677c'>Precios de búsquedas recientes: confírmalos al reservar.</p></div>")
+    text = "\n\n".join(f"{EMOJI.get(a['kind'], '✈️')} {a['message']}\n{a.get('link') or ''}" for a in top)
+    try:
+        send_email(s, title, text, html_body)
+        res = {"email": "ok"}
         ids = [a["id"] for a in alerts if a.get("id")]
         if ids:
             db.execute(f"UPDATE alerts SET notified=1 WHERE id IN ({','.join('?' * len(ids))})", ids)
-    return result
+    except Exception as e:  # noqa: BLE001
+        log.warning("Fallo enviando email: %s", e)
+        res = {"email": f"error: {e}"}
+    return res
 
 
 def send_test(settings=None) -> dict:
     s = settings or db.get_settings()
-    channels = enabled_channels(s)
-    if not channels:
-        return {"error": "No hay ningún canal configurado"}
-    out = {}
-    msg = "✅ Aviso de prueba de Flight Tracker. Si lees esto, las notificaciones funcionan."
-    for ch in channels:
-        try:
-            if ch == "push":
-                out[ch] = send_push(s, "Flight Tracker", "✅ Aviso de prueba: las notificaciones funcionan.")
-                continue
-            if ch == "telegram":
-                send_telegram(s, html.escape(msg))
-            elif ch == "ntfy":
-                send_ntfy(s, "Flight Tracker", msg)
-            elif ch == "email":
-                send_email(s, "Flight Tracker – prueba", msg, f"<p>{html.escape(msg)}</p>")
-            out[ch] = "ok"
-        except Exception as e:  # noqa: BLE001
-            out[ch] = f"error: {e}"
-    return out
+    if not email_ready(s):
+        return {"error": "Falta tu email o la contraseña de aplicación (Ajustes → Email en tu web)"}
+    msg = "✅ Aviso de prueba de Flight Tracker. Si lees esto, los avisos por email funcionan."
+    try:
+        send_email(s, "Flight Tracker – prueba", msg, f"<p style='font-family:sans-serif'>{html.escape(msg)}</p>")
+        return {"email": "ok"}
+    except Exception as e:  # noqa: BLE001
+        return {"email": f"error: {e}"}

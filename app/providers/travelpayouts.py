@@ -39,11 +39,10 @@ class TravelpayoutsError(RuntimeError):
 class TravelpayoutsProvider(PriceProvider):
     name = "travelpayouts"
 
-    def __init__(self, token: str, marker: str = "", timeout: int = 30, session=None, market: str = "es"):
+    def __init__(self, token: str, timeout: int = 30, session=None, market: str = "es"):
         if not token:
             raise TravelpayoutsError("Falta el token de Travelpayouts")
         self.token = token
-        self.marker = marker
         self.market = market
         self.timeout = timeout
         self.http = session or requests.Session()
@@ -106,8 +105,6 @@ class TravelpayoutsProvider(PriceProvider):
             link = item.get("link") or ""
             if link:
                 link = "https://www.aviasales.com" + link
-                if self.marker:
-                    link += ("&" if "?" in link else "?") + f"marker={self.marker}"
             out.append(Quote(
                 origin=origin,
                 destination=destination,

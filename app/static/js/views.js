@@ -22,8 +22,7 @@ function go(view, pending) { if (pending) S.pending = { view, ...pending }; if (
 function openMore() {
   openSheet(`<div class="sh-head"><h2>Más</h2><button class="btn icon ghost close" data-close>${ic('x')}</button></div>
   <div class="sh-body"><div class="list">
-  ${(S.static ? [['holidays', 'sun', 'Puentes y festivos'], ['calendar', 'calendar', 'Calendario de precios'], ['destinations', 'star', 'Destinos'], ['settings', 'settings', 'Preferencias']]
-    : [['holidays', 'sun', 'Puentes y festivos'], ['calendar', 'calendar', 'Calendario de precios'], ['watches', 'eye', 'Vuelos vigilados'], ['destinations', 'star', 'Mis destinos'], ['settings', 'settings', 'Ajustes']])
+  ${[['destinations', 'star', 'Mis destinos'], ['holidays', 'sun', 'Puentes y festivos'], ['calendar', 'calendar', 'Calendario de precios'], ['settings', 'settings', 'Ajustes']]
     .map(([v, i, t]) => `<a class="card item" href="#${v}" data-close>${ic(i)}<span class="title">${t}</span></a>`).join('')}
   <button class="card item btn" id="moreTheme" style="justify-content:flex-start;border-radius:var(--r)">${ic('moon')} Cambiar tema</button>
   </div></div>`);
@@ -31,42 +30,23 @@ function openMore() {
   history.replaceState(null, '', `#${S.view || 'home'}`);
 }
 
-/* =================== estado / escaneo =================== */
+/* =================== estado =================== */
 async function refreshStatus() {
   const s = await api('/api/status'); S.status = s;
   const last = s.last_scan;
-  $('#sideStatus').innerHTML = S.static
-    ? `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza cada 6 horas</div>`
-    : `<div><b>${s.provider === 'demo' ? '🎲 Modo demo' : '✅ Precios reales'}</b></div>
-    <div>Último escaneo: ${last ? ago(last.finished_at || last.started_at) : 'nunca'}</div><div>Próximo: ${until(s.next_run)}</div>`;
-  $$('[data-count="alerts"]').forEach((c) => { c.textContent = s.unread_alerts; c.classList.toggle('hidden', !s.unread_alerts); });
-  $$('[data-count="watches"]').forEach((c) => { c.textContent = s.watches; c.classList.toggle('hidden', !s.watches); });
-  const p = s.progress, bar = $('#scanbar');
-  bar.classList.toggle('hidden', !p.running);
-  $('#scanBtn').disabled = p.running;
-  if (p.running) { $('#scanText').textContent = `Escaneando ${p.current}… ${p.done}/${p.total}`; $('div > div', bar).style.width = `${p.total ? (p.done / p.total) * 100 : 5}%`; }
-  $('#logoutBtn').classList.toggle('hidden', !s.auth);
+  $('#sideStatus').innerHTML = `<div><b>${s.provider === 'demo' ? '🎲 Precios simulados' : '✅ Precios reales'}</b></div><div>Actualizado ${last ? ago(last.finished_at || last.started_at) : '—'}</div><div class="tiny">Se actualiza sola cada 6 horas</div>`;
   const ban = [];
-  if (isIOS() && !isStandalone() && !S.iosHintClosed) ban.push(`<div class="banner info" id="iosHint">📲 <div><b>Úsala como app en tu iPhone:</b> pulsa <b>Compartir</b> (el cuadrado con la flecha ↑) → <b>Añadir a pantalla de inicio</b>. Tendrás su icono, pantalla completa y notificaciones.</div><button class="btn icon ghost" onclick="S.iosHintClosed=1;this.parentElement.remove()">✕</button></div>`);
-  if (s.insecure) ban.push(`<div class="banner warn">${ic('zap')}<div><b>Tu app está accesible desde internet sin contraseña.</b> Define <code>APP_PASSWORD</code> en el servidor para protegerla.</div></div>`);
+  if (isIOS() && !isStandalone() && !S.iosHintClosed) ban.push(`<div class="banner info" id="iosHint">📲 <div><b>Úsala como app en tu iPhone:</b> pulsa <b>Compartir</b> → <b>Añadir a pantalla de inicio</b>.</div><button class="btn icon ghost" onclick="S.iosHintClosed=1;this.parentElement.remove()">✕</button></div>`);
+  if (!isAdmin()) ban.push(`<div class="banner info">🔑 <div><b>Conecta tu GitHub una vez</b> para elegir destinos, filtros y avisos desde aquí. <a href="#settings">Ir a Ajustes</a></div></div>`);
   $('#banners').innerHTML = ban.join('');
   return s;
 }
-let wasRunning = false;
-setInterval(async () => {
-  if (window.STATIC) return;
-  try {
-    const s = await refreshStatus();
-    if (wasRunning && !s.progress.running) { toast('✅ Escaneo terminado'); if (['home', 'calendar', 'watches', 'alerts'].includes(S.view)) route(true); }
-    wasRunning = s.progress.running;
-  } catch (e) { /* sin conexión */ }
-}, 5000);
 async function startScan() {
-  try { await api('/api/scan', { method: 'POST' }); wasRunning = true; toast('Escaneo iniciado'); refreshStatus(); } catch (e) { toast(e.message); }
+  if (!isAdmin()) { toast('Conecta tu GitHub en Ajustes para lanzar escaneos'); go('settings'); return; }
+  try { await ghRunScan(); toast('✈️ Escaneo lanzado en GitHub: la web se actualizará en unos minutos', 6000); } catch (e) { toast(e.message, 6000); }
 }
 $('#scanBtn').onclick = startScan; $('#scanBtnM').onclick = startScan;
 $('#themeBtn').onclick = cycleTheme; $('#themeBtnM').onclick = cycleTheme;
-$('#logoutBtn').onclick = async () => { await api('/api/logout', { method: 'POST' }); location.href = '/login'; };
 
 /* =================== formulario de búsqueda reutilizable =================== */
 function monthOptions() {
@@ -286,8 +266,7 @@ VIEWS.home = async (el) => {
   const s = S.status || await refreshStatus();
   const trips = s.trips; S.homeTrip = S.homeTrip && trips.includes(S.homeTrip) ? S.homeTrip : trips[trips.length - 1];
   el.innerHTML = `
-    ${s.provider === 'demo' ? (S.static ? '<div class="banner info">🎲 <div><b>Precios simulados</b> · esta web está en modo demostración.</div></div>'
-      : `<div class="banner info">🎲 <div><b>Modo demo</b> · precios simulados. <a href="#settings">Añade tu token gratis</a> para ver precios reales.</div></div>`) : ''}
+    ${s.provider === 'demo' ? `<div class="banner info">🎲 <div><b>Precios simulados.</b> Para ver precios reales añade tu clave gratuita de Travelpayouts en <a href="#settings">Ajustes</a>.</div></div>` : ''}
     <div class="hero"><h1>¿A dónde quieres volar?</h1><p class="sub">El día más barato, en segundos.</p><div id="homeSearch"></div></div>
     <div class="kpis">
       <a class="card kpi" href="#destinations"><span class="ic a">⭐</span><div><div class="v">${s.destinations}</div><div class="l">destinos</div></div></a>
@@ -317,7 +296,7 @@ VIEWS.home = async (el) => {
     $('#homeDeals').innerHTML = deals.slice(1).map((d) => dealCard(d)).join('');
   } else {
     $('#homeDeals').innerHTML = `<div class="card empty" style="grid-column:1/-1"><div class="big">✈️</div><h3>${s.destinations ? 'Aún no hay precios' : 'Añade tus destinos favoritos'}</h3>
-      ${S.static ? '' : s.destinations ? '<button class="btn primary" onclick="startScan()">Escanear ahora</button>' : '<a class="btn primary" href="#destinations">Añadir destinos</a>'}</div>`;
+      ${s.destinations ? '<button class="btn primary" onclick="startScan()">Escanear ahora</button>' : '<a class="btn primary" href="#destinations">Añadir destinos</a>'}</div>`;
   }
   $('#homeHol').innerHTML = hol.items.slice(0, 3).map(holCard).join('') || '<p class="muted small">No hay festivos próximos.</p>';
   paintIcons($('#homeHol'));
@@ -328,7 +307,6 @@ VIEWS.home = async (el) => {
       <div style="text-align:right"><div style="font-weight:900">${money(c.price)}</div><span class="delta ${c.pct < 0 ? 'down' : 'up'}">${c.pct < 0 ? '▼' : '▲'} ${Math.abs(c.pct).toFixed(0)}%</span></div></div>`).join('')
     : '<div class="card empty small">Aparecen a partir del segundo escaneo.</div>';
   $('#homeAlerts').innerHTML = alerts.length ? alerts.map(alertItem).join('') : '<div class="card empty small">Sin alertas todavía.</div>';
-  if (!s.onboarded) onboarding();
 };
 
 /* =================== MEJOR DÍA =================== */
@@ -599,74 +577,6 @@ VIEWS.calendar = async (el) => {
   draw();
 };
 
-/* =================== VIGILADOS =================== */
-VIEWS.watches = async (el) => {
-  const ws = await api('/api/watches');
-  el.innerHTML = `<div class="page-head"><div><h1>Vuelos vigilados</h1><p>Te avisamos si suben, bajan o llegan a tu precio objetivo.</p></div></div>
-  ${ws.length ? `<div class="list">${ws.map((w) => {
-    const diff = w.current_price != null && w.last_price != null ? w.current_price - w.last_price : 0;
-    const key = encodeURIComponent(JSON.stringify({ origin: w.origin, destination: w.destination, depart_date: w.depart_date, return_date: w.return_date || null, trip: w.trip }));
-    return `<div class="card item" style="flex-wrap:wrap">${flag(cityInfo(w.destination).country_code)}
-      <div class="grow" style="min-width:220px"><div class="title">${esc(w.origin)} → ${esc(w.name)} <span class="pill neutral">${tripLabel(w.trip)}</span></div>
-        <div class="small muted">${esc(w.date_label)}${w.return_label ? ` → ${esc(w.return_label)}` : ''} · añadido ${ago(w.created_at)}</div></div>
-      <div style="width:140px">${sparkline(w.history, 140, 28)}</div>
-      <div style="text-align:right;min-width:110px"><div style="font-size:1.2rem;font-weight:800">${money(w.current_price)}</div>${diff ? `<span class="delta ${diff < 0 ? 'down' : 'up'}">${diff < 0 ? '▼' : '▲'} ${money(Math.abs(diff))}</span>` : '<span class="tiny muted">sin cambios</span>'}</div>
-      <label class="f" style="width:130px">Objetivo<input type="number" min="0" value="${w.target_price ?? ''}" data-wt="${w.id}" placeholder="${sym()}"></label>
-      <div class="row"><button class="btn sm" data-open="${key}">Detalle</button><a class="btn sm" href="${esc(w.links.aviasales)}" target="_blank" rel="noopener">Reservar</a><button class="btn sm ghost danger" data-unwatch="${w.id}" title="Dejar de vigilar">${ic('trash')}</button></div></div>`;
-  }).join('')}</div>` : `<div class="card empty"><div class="big">👀</div><h3>No vigilas ningún vuelo concreto</h3><p>Abre cualquier vuelo (calendario, Mejor día, Explorar…) y pulsa «Vigilar este vuelo».</p></div>`}`;
-  el.onchange = async (e) => { const t = e.target.closest('[data-wt]'); if (t) { await api(`/api/watches/${t.dataset.wt}`, { method: 'PATCH', body: { target_price: t.value } }); toast('Precio objetivo guardado'); } };
-  el.onclick = async (e) => { const u = e.target.closest('[data-unwatch]'); if (u) { await api(`/api/watches/${u.dataset.unwatch}`, { method: 'DELETE' }); refreshStatus(); route(true); } };
-};
-
-/* =================== DESTINOS =================== */
-VIEWS.destinations = async (el) => {
-  if (S.static) return staticDestView(el);
-  const dests = await api('/api/destinations'); S.destinations = dests;
-  const themes = Object.entries(S.meta.themes);
-  el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los vigilamos cada día. Pon un precio máximo y te avisamos al bajar.</p></div></div>
-    <div class="card pad"><div class="row">
-      <div style="flex:1;min-width:240px"><input id="dIn" placeholder="Añade una ciudad o un país entero…"></div>
-      <input id="dMax" type="number" min="0" placeholder="Precio máx. ${sym()} (opcional)" style="width:200px">
-      <button class="btn primary" id="dAdd">${ic('plus')} Añadir</button></div>
-      <div class="chips" style="margin-top:12px"><span class="small muted" style="align-self:center">Añadir de golpe:</span>${themes.map(([k, t]) => `<button class="chip" data-addtheme="${k}">${t.icon} ${esc(t.label)} (${t.count})</button>`).join('')}</div></div>
-    <div class="section">${dests.length ? `<div class="table-wrap"><table><tr><th>Vigilar</th><th>Destino</th><th>Precio máx.</th><th>Mejor ida</th><th>Mejor i/v</th><th>Días</th><th></th></tr>
-      ${dests.map((d) => `<tr><td><input type="checkbox" data-tg="${d.id}" ${d.enabled ? 'checked' : ''}></td>
-        <td><div class="row" style="flex-wrap:nowrap">${flag(d.country_code)}<div><b>${esc(d.name)}</b> <span class="muted small">${esc(d.code)}</span><div class="tiny muted">${esc(d.country)}</div></div></div></td>
-        <td><input type="number" min="0" value="${d.max_price ?? ''}" data-mx="${d.id}" placeholder="—"></td>
-        <td>${money(d.best_ow)}</td><td>${money(d.best_rt)}</td><td>${d.days}</td>
-        <td class="nowrap"><a href="#" data-cal="${d.code}">calendario</a> · <a href="#" data-bd="${d.code}">mejor día</a> · <a href="#" data-del="${d.id}" style="color:var(--bad)">quitar</a></td></tr>`).join('')}</table></div>`
-    : '<div class="card empty"><div class="big">⭐</div><h3>Aún no tienes destinos</h3><p>Añade ciudades o países arriba, o pulsa una de las temáticas.</p></div>'}</div>`;
-  attachAC($('#dIn'));
-  $('#dAdd').onclick = async () => {
-    const r = resolvePlace($('#dIn').value);
-    try {
-      if (r.country) await api('/api/destinations/country', { method: 'POST', body: { country_code: r.country } });
-      else if (r.destinations) await api('/api/destinations', { method: 'POST', body: { code: r.destinations[0], max_price: $('#dMax').value } });
-      else throw new Error('Elige un destino de la lista');
-      toast('⭐ Añadido. Entrará en el próximo escaneo.'); route(true);
-    } catch (e) { toast(e.message); }
-  };
-  el.onclick = async (e) => {
-    const t = e.target.closest('[data-addtheme]'); if (t) { await addTheme(t.dataset.addtheme); return; }
-    if (t) { const codes = (await api('/api/catalog?limit=500')).length && null; const th = t.dataset.addtheme; await api('/api/search', { method: 'POST', body: {} }).catch(() => {}); await addTheme(th); return codes; }
-    const del = e.target.closest('[data-del]'); if (del) { e.preventDefault(); await api(`/api/destinations/${del.dataset.del}`, { method: 'DELETE' }); route(true); }
-    const cal = e.target.closest('[data-cal]'); if (cal) { e.preventDefault(); S.calSel = { o: S.settings.origins[0], d: cal.dataset.cal, t: S.status.trips[S.status.trips.length - 1] }; go('calendar'); }
-    const bd = e.target.closest('[data-bd]'); if (bd) { e.preventDefault(); go('search', { params: { destText: `${cityName(bd.dataset.bd)} (${bd.dataset.bd})` } }); }
-  };
-  el.onchange = async (e) => {
-    const t = e.target;
-    if (t.dataset.tg) await api(`/api/destinations/${t.dataset.tg}`, { method: 'PATCH', body: { enabled: t.checked } });
-    if (t.dataset.mx) { await api(`/api/destinations/${t.dataset.mx}`, { method: 'PATCH', body: { max_price: t.value } }); toast('Precio máximo guardado'); }
-  };
-};
-async function addTheme(th) {
-  const t = S.meta.themes[th];
-  if (!confirm(`¿Añadir los ${t.count} destinos de «${t.label}»? Más destinos = escaneos más largos.`)) return;
-  const r = await api(`/api/themes/${th}`);
-  await api('/api/destinations', { method: 'POST', body: { codes: r.codes } });
-  toast('⭐ Destinos añadidos'); route(true);
-}
-
 /* =================== ALERTAS =================== */
 function alertItem(a) {
   const [label, cls] = KIND[a.kind] || [a.kind, 'neutral'];
@@ -678,8 +588,8 @@ function alertItem(a) {
 VIEWS.alerts = async (el) => {
   const alerts = await api('/api/alerts?limit=300');
   const kinds = [...new Set(alerts.map((a) => a.kind))];
-  el.innerHTML = `<div class="page-head"><div><h1>${S.static ? 'Últimos chollos' : 'Alertas'}</h1><p>${S.static ? 'Ofertas detectadas en los últimos escaneos.' : 'Solo ofertas que merecen la pena · como mucho una por destino.'}</p></div>
-    <div class="row ${S.static ? 'hidden' : ''}"><button class="btn sm" id="aRead">${ic('check')} Marcar leídas</button><button class="btn sm" id="aCsv">${ic('download')} CSV</button><button class="btn sm danger" id="aClear">${ic('trash')} Borrar</button></div></div>
+  el.innerHTML = `<div class="page-head"><div><h1>Alertas</h1><p>Solo ofertas que merecen la pena · como mucho una por destino. Te llegan por email.</p></div>
+</div>
     <div class="chips" id="aF"><button class="chip on" data-k="">Todas (${alerts.length})</button>${kinds.map((k) => `<button class="chip" data-k="${k}">${esc((KIND[k] || [k])[0])} (${alerts.filter((a) => a.kind === k).length})</button>`).join('')}</div>
     <div class="list section" id="aList"></div>`;
   // Agrupadas por destino: se ve el aviso más reciente y el resto queda plegado
@@ -688,374 +598,25 @@ VIEWS.alerts = async (el) => {
     const groups = []; const idx = {};
     l.forEach((a) => { if (!(a.destination in idx)) { idx[a.destination] = groups.length; groups.push([]); } groups[idx[a.destination]].push(a); });
     $('#aList').innerHTML = groups.length ? groups.map((g) => `<div class="agroup">${alertItem(g[0])}${g.length > 1 ? `<button class="agroup-more" data-more>+${g.length - 1} aviso${g.length > 2 ? 's' : ''} anterior${g.length > 2 ? 'es' : ''} de ${esc(g[0].dest_name)}</button><div class="older" hidden>${g.slice(1).map(alertItem).join('')}</div>` : ''}</div>`).join('')
-      : `<div class="card empty"><div class="big">🔔</div><h3>Sin alertas</h3><p>${S.static ? 'Aquí aparecerán solo las ofertas que de verdad merecen la pena.' : `Solo avisamos de ofertas ${esc(((S.meta.alert_levels || {})[S.settings.alert_level] || 'muy buenas').toLowerCase())}: como mucho una por destino. Cámbialo en Ajustes → Avisos.`}</p></div>`;
+      : `<div class="card empty"><div class="big">🔔</div><h3>Sin alertas</h3><p>${false ? '' : `Solo avisamos de ofertas ${esc(((S.meta.alert_levels || {})[S.settings.alert_level] || 'muy buenas').toLowerCase())}: como mucho una por destino. Cámbialo en Ajustes → Avisos.`}</p></div>`;
   };
   $('#aList').addEventListener('click', (e) => { const m = e.target.closest('[data-more]'); if (m) { e.stopPropagation(); const o = m.nextElementSibling; if (!m.dataset.t) m.dataset.t = m.textContent; o.hidden = !o.hidden; m.textContent = o.hidden ? m.dataset.t : 'Ocultar anteriores'; } }, true);
   $('#aF').onclick = (e) => { const b = e.target.closest('[data-k]'); if (b) { $$('#aF .chip').forEach((x) => x.classList.toggle('on', x === b)); draw(b.dataset.k); } };
   draw('');
-  $('#aRead').onclick = async () => { await api('/api/alerts/read', { method: 'POST' }); refreshStatus(); route(true); };
-  $('#aClear').onclick = async () => { if (confirm('¿Borrar todas las alertas?')) { await api('/api/alerts', { method: 'DELETE' }); refreshStatus(); route(true); } };
-  $('#aCsv').onclick = () => download('alertas.csv', toCSV(alerts, [['fecha', (a) => a.created_at], ['tipo', (a) => a.kind_label], ['mensaje', (a) => a.message], ['enlace', (a) => a.link]]), 'text/csv');
 };
 
-/* =================== AJUSTES =================== */
-function isOwnerDevice() {
-  if (S.private) return true;
-  let f = false;
-  try { if (location.hash.includes('avisos')) localStorage.setItem('ft-owner', '1'); f = localStorage.getItem('ft-owner') === '1'; } catch (e) { f = location.hash.includes('avisos'); }
-  return f;
-}
-async function renderPrefs(el) {
-  const s = await api('/api/settings');
-  el.innerHTML = `<div class="page-head"><div><h1>${S.private ? 'Ajustes' : 'Preferencias'}</h1><p>${S.private ? 'Tu web privada. Viajeros, equipaje y residente se guardan en este dispositivo.' : 'Se guardan solo en este navegador.'}</p></div>${S.private ? `<button class="btn sm ghost" id="pLogout">${ic('logout')} Cerrar sesión</button>` : ''}</div>
-  <div class="card pad grid-form">
-    <label class="f">Viajeros<input id="pPax" type="number" min="1" max="9" value="${s.passengers || 1}"></label>
-    <label class="f">Equipaje<select id="pBag">${Object.entries(S.meta.baggage_options).map(([k, v]) => `<option value="${k}" ${s.baggage === k ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select></label>
-    <label class="f">Descuento de residente<select id="pRes"><option value="">No soy residente</option><option value="canarias" ${s.resident_discount === 'canarias' ? 'selected' : ''}>Residente en Canarias (75 %)</option><option value="baleares" ${s.resident_discount === 'baleares' ? 'selected' : ''}>Residente en Baleares (75 %)</option></select></label>
-    <button class="btn primary" id="pSave">${ic('check')} Guardar</button>
-  </div>
-  <div class="section" id="adminAlerts"></div>
-  <div class="card pad section ${S.meta.vapid_public && isOwnerDevice() ? '' : 'hidden'}" id="pubPush"><h2>🔔 Avisos en este móvil</h2>
-    <p class="small muted" style="margin:6px 0 12px">Recibe los chollos como notificaciones, sin instalar ninguna app.</p>
-    <div id="pubPushBody"></div></div>
-  <div class="card pad section"><h2>📱 Instálala en tu móvil</h2><p class="small muted" style="margin:6px 0 0">En el navegador del móvil pulsa «Compartir → Añadir a pantalla de inicio» (iPhone) o «⋮ → Instalar app» (Android).</p></div>
-  <div class="card pad section"><h2>ℹ️ Sobre los precios</h2><p class="small muted" style="margin:6px 0 0">Precios de búsquedas recientes en Aviasales, actualizados cada 6 horas. Pueden cambiar: confírmalos siempre al reservar. El equipaje y el descuento de residente son estimaciones.</p></div>`;
-  paintIcons(el);
-  if (isOwnerDevice() || isAdmin()) adminAlertsCard($('#adminAlerts'));
-  $('#pLogout')?.addEventListener('click', () => { if (confirm('¿Cerrar sesión en este dispositivo? Tendrás que volver a escribir la contraseña.')) siteLogout(); });
-  const pp = $('#pubPushBody');
-  if (pp) {
-    const sup = pushSupport();
-    pp.innerHTML = sup.ok ? '<button class="btn primary" id="pubPushBtn">🔔 Activar avisos en este móvil</button>' : `<p class="small" style="margin:0">${esc(sup.reason)}</p>`;
-    $('#pubPushBtn')?.addEventListener('click', async (e) => {
-      e.currentTarget.disabled = true;
-      try {
-        const code = encodeDevice(await subscribePush('push-sw.js', S.meta.vapid_public));
-        pp.innerHTML = `<p class="small" style="margin:0 0 8px">✅ Listo. Último paso: envía este código a tu Flight Tracker del ordenador (<b>Ajustes → Avisos → Añadir tu móvil</b>).</p>
-          <textarea readonly rows="3" style="font-size:.75rem" id="pubCode">${esc(code)}</textarea>
-          <div class="row" style="margin-top:8px"><button class="btn primary" id="pubShare">${ic('share')} Compartir código</button><button class="btn" id="pubCopy">Copiar</button></div>`;
-        paintIcons(pp);
-        $('#pubCopy').onclick = async () => { try { await navigator.clipboard.writeText(code); toast('Copiado'); } catch (err) { $('#pubCode').select(); } };
-        $('#pubShare').onclick = () => shareText('Código de avisos Flight Tracker', code, '');
-      } catch (err) { toast(err.message, 7000); e.currentTarget.disabled = false; }
-    });
-  }
-  $('#pSave').onclick = async () => { S.settings = await api('/api/settings', { method: 'PUT', body: { passengers: +$('#pPax').value, baggage: $('#pBag').value, resident_discount: $('#pRes').value } }); SD.cache = {}; toast('✅ Guardado'); };
-}
-VIEWS.settings = async (el) => {
-  if (S.static) return renderPrefs(el);
-  const s = await api('/api/settings'); S.settings = s; let origins = [...s.origins];
-  const sel = (name, opts) => `<select name="${name}">${opts.map(([k, v]) => `<option value="${k}" ${String(s[name]) === String(k) ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>`;
-  const inp = (name, type = 'text', extra = '') => `<input name="${name}" type="${type}" value="${esc(s[name] ?? '')}" ${extra}>`;
-  el.innerHTML = `<div class="page-head"><div><h1>Ajustes</h1><p>Todo se guarda en tu servidor. Los secretos se muestran enmascarados.</p></div></div>
-  <div id="cloudBox" class="card pad" style="margin-bottom:16px"><div class="skel" style="height:120px"></div></div>
-  <form id="sf" autocomplete="off">
-    <div class="card pad"><h2>✈️ Desde dónde sales</h2><p class="muted small">Aeropuertos de salida para los escaneos y búsquedas. Códigos IATA de ciudad (TCI = Tenerife, LON = todos los de Londres…).</p>
-      <div class="chips" id="oChips"></div>
-      <div class="row" style="margin-top:10px"><div style="flex:1;min-width:220px"><input id="oIn" placeholder="Añadir aeropuerto…"></div><button type="button" class="btn" id="oAdd">${ic('plus')} Añadir</button><button type="button" class="btn" id="oEs">🇪🇸 Toda España</button></div></div>
-
-    <div class="card pad section"><h2>🧳 Tu viaje por defecto</h2><div class="grid-form" style="margin-top:12px">
-      <label class="f">Vigilar automáticamente${sel('trip_type', [['both', 'Ida y vuelta + solo ida'], ['rt', 'Solo ida y vuelta'], ['ow', 'Solo ida']])}</label>
-      <label class="f">Noches mínimas${inp('min_nights', 'number', 'min="1" max="60"')}</label>
-      <label class="f">Noches máximas${inp('max_nights', 'number', 'min="1" max="60"')}</label>
-      <label class="f">Viajeros${inp('passengers', 'number', 'min="1" max="9"')}</label>
-      <label class="f">Equipaje${sel('baggage', Object.entries(S.meta.baggage_options))}</label>
-      <label class="f">Solo directos${sel('direct_only', [['false', 'No'], ['true', 'Sí']])}</label>
-      <label class="f">Moneda${sel('currency', [['eur', 'EUR €'], ['usd', 'USD $'], ['gbp', 'GBP £']])}</label>
-      <label class="f">Meses a vigilar${inp('months_ahead', 'number', 'min="1" max="13"')}</label>
-    </div><p class="tiny muted">«Ida y vuelta + solo ida» duplica las peticiones de cada escaneo. El equipaje y los viajeros se usan para calcular el precio total estimado.</p></div>
-
-    <div class="card pad section"><h2>🔌 Fuente de precios</h2><div class="grid-form" style="margin-top:12px">
-      <label class="f">Proveedor${sel('provider', [['auto', 'Automático'], ['travelpayouts', 'Travelpayouts (real)'], ['demo', 'Demo (simulado)']])}</label>
-      <label class="f">Token Travelpayouts${inp('travelpayouts_token')}</label>
-      <label class="f">Marker afiliado (opcional)${inp('travelpayouts_marker')}</label>
-      <label class="f">Clave SerpApi (Google Flights)${inp('serpapi_key')}</label>
-    </div><p class="tiny muted">Token gratis en travelpayouts.com. SerpApi (250 búsquedas/mes gratis) activa «Comprobar precio real», con historial de Google y equipaje real.</p></div>
-
-    <div class="card pad section"><h2>🔔 Qué merece un aviso</h2>
-      <p class="small muted" style="margin:4px 0 12px">Como mucho <b>un aviso por destino</b> en cada escaneo (el mejor), y no se repite salvo que aparezca algo claramente mejor.</p>
-      <div class="seg" id="lvlSeg">${Object.entries(S.meta.alert_levels).map(([k, l]) => `<button type="button" data-l="${k}" class="${s.alert_level === k ? 'on' : ''}">${esc(l)}</button>`).join('')}</div>
-      <input type="hidden" name="alert_level" value="${esc(s.alert_level)}">
-      <p class="tiny muted" id="lvlHelp" style="margin:8px 0 0"></p>
-      <div class="grid-form" style="margin-top:12px">
-        <label class="f">Avisar también de bajadas simples${sel('alert_drops', [['false', 'No (recomendado)'], ['true', 'Sí']])}</label>
-        <label class="f">Antelación mínima (días)${inp('min_days_ahead', 'number', 'min="0"')}</label>
-        <label class="f">Antelación máxima (días)${inp('max_days_ahead', 'number', 'min="1"')}</label>
-        <label class="f">Repetir aviso de un destino si baja otro (%)${inp('realert_pct', 'number', 'min="0" max="90"')}</label>
-        <label class="f">… en los próximos (días)${inp('realert_days', 'number', 'min="1" max="60"')}</label>
-        <label class="f">Vigilados: avisar si cambia (%)${inp('watch_change_pct', 'number', 'min="1" max="90"')}</label>
-        <label class="f">Ofertas por mensaje${inp('notify_max_items', 'number', 'min="1" max="50"')}</label>
-      </div></div>
-
-    <div class="card pad section"><h2>🧭 Filtros de los escaneos</h2>
-      <p class="small muted" style="margin:4px 0 12px">Solo se vigilan (y se avisan) vuelos que cumplan esto. También son los filtros por defecto de las búsquedas.</p>
-      <div class="grid-form">
-        <label class="f">Escalas${sel('max_stops', [[-1, 'Cualquiera'], [0, 'Solo directos'], [1, 'Máx. 1 escala'], [2, 'Máx. 2 escalas']])}</label>
-        <label class="f">Duración máx. por trayecto (h, 0 = sin límite)${inp('max_duration_h', 'number', 'min="0" max="60"')}</label>
-      </div>
-      <div class="fl" style="margin-top:12px">Hora de salida</div>
-      <div class="chips" id="sWin" style="margin-top:6px">${Object.entries(S.meta.windows).map(([k, l]) => `<button type="button" class="chip ${(s.dep_windows || '').split(',').includes(k) ? 'on' : ''}" data-w="${k}">${WIN_ICON[k]} ${esc(l)} <span class="tiny muted">${WIN_RANGE[k]}</span></button>`).join('')}</div>
-      <input type="hidden" name="dep_windows" value="${esc(s.dep_windows || '')}">
-      <div class="fl" style="margin-top:12px">Aerolíneas que NO quiero</div>
-      <div class="chips" id="sAl" style="margin-top:6px">${Object.entries(S.meta.airlines).sort((x, y) => x[1].localeCompare(y[1])).map(([k, l]) => `<button type="button" class="chip ${(s.exclude_airlines || []).includes(k) ? 'off' : ''}" data-a="${k}">${esc(l)}</button>`).join('')}</div>
-      <input type="hidden" name="exclude_airlines" value="${esc((s.exclude_airlines || []).join(','))}">
-    </div>
-
-    <div class="card pad section"><h2>📲 Avisos</h2>
-      <h3 style="margin-top:14px">🔔 Notificaciones de la app <span class="pill good">sin instalar nada</span></h3>
-      <p class="small muted" style="margin:4px 0 10px">Llegan como las de cualquier app, en este ordenador y en tu móvil.</p>
-      <div id="pushBox"><div class="skel" style="height:60px"></div></div>
-
-      <h3 style="margin-top:18px">✉️ Email</h3>
-      <div class="grid-form" style="margin-top:8px">
-        <label class="f">Tu email${inp('email_to', 'email', 'placeholder="tu@gmail.com"')}</label>
-        <label class="f">Contraseña de aplicación de Google${inp('smtp_password', 'password', 'autocomplete="new-password" placeholder="16 letras"')}</label>
-      </div>
-      <p class="tiny muted" style="margin:6px 0 0">Con Gmail: crea una <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">contraseña de aplicación</a> (necesita la verificación en 2 pasos) y pégala aquí. No es tu contraseña normal.</p>
-
-      <details style="margin-top:14px"><summary class="small muted" style="cursor:pointer">Otros canales y opciones (opcional)</summary>
-      <div class="grid-form" style="margin-top:12px">
-        <label class="f">Servidor SMTP (si no es Gmail)${inp('smtp_host', 'text', 'placeholder="smtp.gmail.com"')}</label>
-        <label class="f">Puerto${inp('smtp_port', 'number')}</label>
-        <label class="f">Usuario SMTP${inp('smtp_user')}</label>
-        <label class="f">Remitente${inp('smtp_from')}</label>
-        <label class="f">Telegram: token del bot${inp('telegram_bot_token')}</label>
-        <label class="f">Telegram: chat id${inp('telegram_chat_id')}</label>
-        <label class="f">ntfy: tema${inp('ntfy_topic')}</label>
-        <label class="f">ntfy: servidor${inp('ntfy_server')}</label>
-      </div></details>
-      <div class="grid-form" style="margin-top:14px">
-        <label class="f">Horas de silencio${inp('quiet_hours', 'text', 'placeholder="23-8"')}</label>
-        <label class="f">Zona horaria${sel('timezone', [['Europe/Madrid', 'Península y Baleares'], ['Atlantic/Canary', 'Canarias'], ['Europe/London', 'Reino Unido'], ['UTC', 'UTC']])}</label>
-      </div>
-      <div class="row" style="margin-top:12px"><button type="button" class="btn" id="tNotif">${ic('bell')} Probar todos los avisos</button><span id="tRes" class="small muted"></span></div></div>
-
-    <div class="card pad section"><h2>⏱️ Escaneo automático</h2><div class="grid-form" style="margin-top:12px">
-      <label class="f">Cada (horas)${inp('scan_interval_hours', 'number', 'min="1" max="168"')}</label>
-      <label class="f">Pausa entre peticiones (s)${inp('request_delay_s', 'number', 'step="0.1" min="0"')}</label>
-      <label class="f">Caché de búsquedas (h)${inp('search_cache_hours', 'number', 'step="0.5" min="0"')}</label>
-      <label class="f">Festivos de${sel('holiday_region', Object.entries(S.meta.holiday_regions))}</label>
-      <label class="f">Descuento de residente${sel('resident_discount', [['', 'No soy residente'], ['canarias', 'Residente en Canarias (75 %)'], ['baleares', 'Residente en Baleares (75 %)']])}</label>
-    </div></div>
-
-    <div class="card pad section"><h2>📱 App en el móvil</h2><p class="small muted">Abre esta web en el móvil y usa «Añadir a pantalla de inicio» (Safari/Chrome): se instala como una app. Para abrirla fuera de casa, publícala online (mira DEPLOY.md).</p>
-      <div class="row"><button type="button" class="btn" id="installBtn" hidden>${ic('download')} Instalar app</button><button type="button" class="btn" id="reOnb">✨ Repetir asistente inicial</button></div></div>
-
-    <div class="row" style="position:sticky;bottom:0;background:var(--bg);padding:14px 0;margin-top:16px;border-top:1px solid var(--border);z-index:5">
-      <button class="btn primary" type="submit">${ic('check')} Guardar ajustes</button><span id="sMsg" class="small muted"></span></div>
-  </form>`;
-  const drawO = () => { $('#oChips').innerHTML = origins.map((o) => `<span class="chip">${flag(cityInfo(o).country_code)} ${esc(cityName(o))} (${o})<button type="button" class="x" data-rm="${o}">×</button></span>`).join('') || '<span class="muted small">Sin orígenes</span>'; };
-  drawO(); attachAC($('#oIn'), { countries: false });
-  $('#oChips').onclick = (e) => { const b = e.target.closest('[data-rm]'); if (b) { origins = origins.filter((x) => x !== b.dataset.rm); drawO(); } };
-  $('#oAdd').onclick = () => { const r = resolvePlace($('#oIn').value); if (!r.destinations) return toast('Elige un aeropuerto de la lista'); origins = [...new Set([...origins, ...r.destinations])]; $('#oIn').value = ''; drawO(); };
-  $('#oEs').onclick = () => { origins = [...new Set([...origins, ...S.meta.spain_origins.map((c) => c.code)])]; drawO(); toast('Más orígenes = escaneos más largos'); };
-  const lvlHelp = { excepcional: 'Solo errores de tarifa y ofertas de ≥40 % bajo lo habitual (muy pocas al mes).', muy_buena: 'Ofertas de ≥30 % bajo lo habitual y entre las fechas más baratas del año.', buena: 'Ofertas de ≥20 % bajo lo habitual. Más avisos.' };
-  const setLvl = (k) => { $$('#lvlSeg [data-l]').forEach((b) => b.classList.toggle('on', b.dataset.l === k)); $('[name=alert_level]').value = k; $('#lvlHelp').textContent = lvlHelp[k] || ''; };
-  setLvl(s.alert_level); $('#lvlSeg').onclick = (e) => { const b = e.target.closest('[data-l]'); if (b) setLvl(b.dataset.l); };
-  $('#sWin').onclick = (e) => { const b = e.target.closest('[data-w]'); if (!b) return; b.classList.toggle('on'); $('[name=dep_windows]').value = $$('#sWin .on').map((x) => x.dataset.w).join(','); };
-  $('#sAl').onclick = (e) => { const b = e.target.closest('[data-a]'); if (!b) return; b.classList.toggle('off'); $('[name=exclude_airlines]').value = $$('#sAl .off').map((x) => x.dataset.a).join(','); };
-  $('#sf').onsubmit = async (e) => {
-    e.preventDefault(); const body = { origins };
-    for (const x of e.target.elements) if (x.name) body[x.name] = x.value;
-    const em = (body.email_to || '').trim().toLowerCase();
-    if (em && !body.smtp_host && /@(gmail|googlemail)\.com$/.test(em)) Object.assign(body, { smtp_host: 'smtp.gmail.com', smtp_port: 587, smtp_user: em, smtp_from: em });
-    if (em && body.smtp_host && !body.smtp_user) body.smtp_user = em;
-    if (body.smtp_password) body.smtp_password = body.smtp_password.replace(/\s+/g, '');
-    try {
-      S.settings = await api('/api/settings', { method: 'PUT', body }); $('#sMsg').textContent = '✅ Guardado'; setTimeout(() => ($('#sMsg').textContent = ''), 2500); refreshStatus();
-      if (S.cloud?.configured && S.cloud?.workflow) { toast('☁️ Sincronizando con GitHub…'); api('/api/cloud/sync', { method: 'POST', body: { schedule: S.cloud.schedule_enabled !== false } }).then(() => { toast('☁️ GitHub actualizado'); renderCloud(); }).catch((e) => toast(e.message)); }
-    } catch (err) { toast(err.message); }
-  };
-  $('#tNotif').onclick = async () => { $('#tRes').textContent = 'Enviando…'; const r = await api('/api/settings/test-notification', { method: 'POST' }); $('#tRes').textContent = r.error || Object.entries(r).map(([k, v]) => `${k}: ${v}`).join(' · '); };
-  $('#reOnb').onclick = onboarding;
-  renderPush();
-  renderCloud();
-  if (S.installPrompt) { $('#installBtn').hidden = false; $('#installBtn').onclick = () => S.installPrompt.prompt(); }
-};
 VIEWS.more = () => {};
-
-/* =================== NOTIFICACIONES PROPIAS (Web Push) =================== */
-async function renderPush() {
-  const box = $('#pushBox'); if (!box) return;
-  const [devs, key] = await Promise.all([api('/api/push/devices'), api('/api/push/key')]);
-  const sup = pushSupport();
-  box.innerHTML = `
-    ${devs.length ? `<div class="list">${devs.map((d) => `<div class="card item" style="padding:8px 12px">📱<div class="grow"><b>${esc(d.name)}</b><div class="tiny muted">desde ${esc(d.added || '—')}</div></div><button type="button" class="btn sm ghost danger" data-rmdev="${d.id}">${ic('trash')}</button></div>`).join('')}</div>`
-    : '<p class="small muted" style="margin:0">Aún no hay dispositivos.</p>'}
-    <div class="row" style="margin-top:10px">
-      <button type="button" class="btn primary" id="pushHere" ${sup.ok ? '' : 'disabled'}>🔔 Activar en este ordenador</button>
-      ${devs.length ? '<button type="button" class="btn" id="pushTest">Enviar prueba</button>' : ''}
-      ${sup.ok ? '' : `<span class="small muted">${esc(sup.reason)}</span>`}
-    </div>
-    <details style="margin-top:12px" ${devs.length ? '' : 'open'}><summary style="cursor:pointer;font-weight:700">📱 Añadir tu móvil</summary>
-      <ol class="small" style="margin:8px 0;padding-left:18px">
-        <li>Abre en tu móvil tu enlace privado de avisos: ${S.settings.site_url ? `<b>${esc(S.settings.site_url.replace(/\/$/, ''))}/#avisos</b> <button type="button" class="btn sm ghost" id="ownLink">Copiar</button>` : 'aparecerá aquí cuando actives la web pública en «☁️ Avisos 24/7».'}</li>
-        <li>En iPhone: «Compartir → Añadir a pantalla de inicio» y ábrela desde el icono.</li>
-        <li>Pulsa <b>Activar avisos en este móvil</b> y luego <b>Compartir código</b>.</li>
-        <li>Pega aquí el código:</li></ol>
-      <p class="tiny muted" style="margin:0 0 8px">Los visitantes de la web pública no ven esta opción: los avisos son solo para ti.</p>
-      <div class="row"><input id="devCode" placeholder="Código del dispositivo" style="flex:1;min-width:220px"><input id="devName" placeholder="Nombre (p. ej. Mi móvil)" style="width:180px"><button type="button" class="btn" id="devAdd">${ic('plus')} Añadir</button></div>
-    </details>`;
-  paintIcons(box);
-  box.onclick = async (e) => { const b = e.target.closest('[data-rmdev]'); if (b) { await api(`/api/push/devices/${b.dataset.rmdev}`, { method: 'DELETE' }); renderPush(); } };
-  $('#pushHere')?.addEventListener('click', async (e) => {
-    e.currentTarget.disabled = true;
-    try { const sub = await subscribePush('/sw.js', key.public_key); await api('/api/push/devices', { method: 'POST', body: { subscription: sub, name: deviceName() } }); toast('🔔 Notificaciones activadas en este ordenador'); }
-    catch (err) { toast(err.message, 6000); }
-    renderPush();
-  });
-  $('#pushTest')?.addEventListener('click', async () => { try { const r = await api('/api/push/test', { method: 'POST' }); toast(`🔔 Prueba enviada: ${r.push}`); } catch (err) { toast(err.message, 6000); } });
-  $('#ownLink')?.addEventListener('click', async () => { try { await navigator.clipboard.writeText(S.settings.site_url.replace(/\/$/, '') + '/#avisos'); toast('Enlace copiado'); } catch (e) { /* */ } });
-  $('#devAdd').onclick = async () => {
-    try { await api('/api/push/devices', { method: 'POST', body: { code: $('#devCode').value, name: $('#devName').value } }); toast('📱 Dispositivo añadido. Si usas GitHub, se sincroniza solo.'); renderPush(); }
-    catch (err) { toast(err.message, 6000); }
-  };
-}
-
-/* =================== NUBE: avisos 24/7 + web pública (GitHub) =================== */
-async function renderCloud() {
-  const box = $('#cloudBox'); if (!box) return;
-  let c;
-  try { c = await api('/api/cloud/status'); } catch (e) { c = { error: e.message }; }
-  S.cloud = c;
-  const s = S.settings;
-  const step = (ok, title, body = '', warn = false) => `<div class="cstep ${ok ? 'ok' : warn ? 'warn' : ''}"><i>${ok ? '✓' : warn ? '!' : '·'}</i><div><b>${title}</b>${body ? `<div class="small muted">${body}</div>` : ''}</div></div>`;
-  const ready = c.configured && !c.error;
-  box.innerHTML = `<div class="row"><h2 style="flex:1">☁️ Avisos 24/7 y web pública <span class="pill good">gratis</span></h2>
-      ${ready && c.pages_url ? `<a class="btn sm primary" href="${esc(c.pages_url)}" target="_blank" rel="noopener">${ic('ext')} Abrir web pública</a>` : ''}</div>
-    <p class="small muted" style="margin:6px 0 14px">GitHub revisa los precios cada 6 h aunque apagues el PC, te avisa al móvil y publica una web de solo lectura que cualquiera puede abrir. Tus claves nunca se publican.</p>
-    <div class="csteps">
-      ${step(c.has_token && !c.error, '1. Conecta tu cuenta de GitHub', c.error ? `<span style="color:var(--bad)">${esc(c.error)}</span>` : c.has_token ? `Repositorio: <b>${esc(c.repo || '—')}</b>` :
-        `<details><summary>Cómo crear el token (2 min)</summary><ol class="small" style="margin:6px 0;padding-left:18px">
-          <li>Abre <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com → Fine-grained token</a>.</li>
-          <li>Nombre: «Flight Tracker». Caducidad: 1 año.</li>
-          <li><b>Repository access</b> → Only select repositories → tu repositorio.</li>
-          <li><b>Permissions → Repository</b>: Actions, Administration, Pages, Secrets y Variables en «Read and write».</li>
-          <li>Pulsa <b>Generate token</b>, cópialo y pégalo aquí.</li></ol></details>`)}
-      <div class="row" style="margin:-4px 0 10px 34px"><input id="ghTok" type="password" placeholder="${c.has_token ? 'Token guardado ••••' : 'Pega tu token de GitHub'}" style="flex:1;min-width:200px">
-        <input id="ghRepo" placeholder="usuario/repositorio" value="${esc(s.github_repo || c.detected_repo || '')}" style="width:220px">
-        <button class="btn sm" id="ghSave">Guardar y comprobar</button></div>
-      ${ready ? step(c.workflow, '2. Código subido a GitHub', c.workflow ? 'Workflow «Escaneo programado» encontrado.' : 'Sube el código una vez: <code>git add -A; git commit -m "v3"; git push</code>') : ''}
-      ${ready ? step(!c.private, '3. Repositorio público', c.private ? 'GitHub Pages gratis y los minutos ilimitados de Actions requieren un repositorio público. Tus secrets siguen ocultos. <button class="btn sm" id="ghPublic">Hacer público</button>' : 'Público: minutos de Actions ilimitados y web gratis.', c.private) : ''}
-      ${ready ? step(c.has_price_token, '4. Token de precios (Travelpayouts)', c.has_price_token ? 'Guardado en GitHub como secret.' : s.travelpayouts_token ? 'Pulsa «Sincronizar» para subirlo.' : 'Ponlo abajo en «Fuente de precios» y sincroniza.') : ''}
-      ${ready ? step(c.has_notifications, '5. Avisos al móvil', c.has_notifications ? 'Canal configurado.' : 'Pon un tema de ntfy o Telegram abajo en «Notificaciones» y sincroniza.', !c.has_notifications) : ''}
-      ${ready ? step(c.in_sync, '6. Ajustes y destinos sincronizados', c.in_sync ? 'GitHub usa tus orígenes, destinos y preferencias actuales.' : 'Hay cambios sin subir.') : ''}
-      ${ready ? step(c.schedule_enabled, '7. Escaneo automático cada 6 h', `<label class="check"><input type="checkbox" id="ghSched" ${c.schedule_enabled ? 'checked' : ''}> Activado</label>`) : ''}
-      ${ready ? step(c.pages_enabled && c.pages_is_actions, '8. Web pública', c.pages_url ? `<a href="${esc(c.pages_url)}" target="_blank" rel="noopener"><b>${esc(c.pages_url)}</b></a> <button class="btn sm ghost" id="ghShare">${ic('share')} Compartir</button><div class="tiny">Se actualiza tras cada escaneo real (el primero tarda ~5 min).</div>` : 'Se activa al sincronizar (repositorio público).') : ''}
-      ${ready ? step(!!s.site_password, '9. Web privada con contraseña (recomendado)', s.site_password
-        ? `Activada: tu web pide contraseña <b>una sola vez por dispositivo</b> y la recuerda. Nadie más ve tus precios. Desde ella gestionas destinos, avisos y email.<div class="row" style="margin-top:6px"><input id="ghPw" type="password" autocomplete="new-password" placeholder="Nueva contraseña (para cambiarla)" style="flex:1;min-width:180px"><button class="btn sm" id="ghPwSave">Cambiar</button><button class="btn sm ghost" id="ghPwOff">Quitar</button></div>`
-        : `Pon una contraseña y tu web online será solo tuya. La recordará en tu móvil y ordenador, y podrás añadir destinos y configurar el email desde ella.<div class="row" style="margin-top:6px"><input id="ghPw" type="password" autocomplete="new-password" placeholder="Contraseña (mín. 10 caracteres)" style="flex:1;min-width:180px"><button class="btn sm primary" id="ghPwSave">Activar</button></div>`) : ''}
-    </div>
-    ${ready ? `<div class="row" style="margin-top:14px">
-      <button class="btn primary" id="ghSync">${ic('refresh')} Sincronizar con GitHub</button>
-      <button class="btn" id="ghDemo">🔔 Probar aviso (demo)</button>
-      <button class="btn" id="ghRun">${ic('zap')} Escanear ahora en la nube</button>
-      <label class="check"><input type="checkbox" id="ghPublish" ${s.publish_site ? 'checked' : ''}> Publicar web pública</label>
-      <input id="ghTitle" value="${esc(s.site_title || '')}" placeholder="Título de la web" style="width:200px"></div>
-    ${c.runs && c.runs.length ? `<h3 style="margin-top:16px">Últimas ejecuciones</h3><div class="list" style="margin-top:8px">${c.runs.map((r) => {
-      const st = r.status !== 'completed' ? ['⏳ En curso', 'warn'] : r.conclusion === 'success' ? ['✓ Correcto', 'good'] : r.conclusion === 'skipped' ? ['Omitido', 'neutral'] : ['✗ Error', 'bad'];
-      return `<a class="card item" href="${esc(r.url)}" target="_blank" rel="noopener" style="padding:8px 12px"><span class="pill ${st[1]}">${st[0]}</span><span class="grow small">${r.event === 'schedule' ? 'Automático' : 'Manual'} · ${ago(r.created_at)}</span>${ic('ext')}</a>`;
-    }).join('')}</div>` : ''}` : ''}`;
-  paintIcons(box);
-  const act = async (btn, fn, ok) => { btn.disabled = true; try { const r = await fn(); toast(ok(r)); } catch (e) { toast(e.message, 6000); } btn.disabled = false; renderCloud(); };
-  $('#ghSave').onclick = (e) => act(e.currentTarget, async () => {
-    const body = { github_repo: $('#ghRepo').value.trim() }; if ($('#ghTok').value.trim()) body.github_token = $('#ghTok').value.trim();
-    S.settings = await api('/api/settings', { method: 'PUT', body }); return true;
-  }, () => 'Guardado. Comprobando GitHub…');
-  $('#ghPublic')?.addEventListener('click', (e) => { if (confirm('¿Hacer público el repositorio? El código será visible; tus tokens (secrets) seguirán ocultos.')) act(e.currentTarget, () => api('/api/cloud/make-public', { method: 'POST' }), () => '✅ Repositorio público'); });
-  $('#ghSync')?.addEventListener('click', (e) => act(e.currentTarget, async () => {
-    S.settings = await api('/api/settings', { method: 'PUT', body: { publish_site: $('#ghPublish').checked, site_title: $('#ghTitle').value } });
-    return api('/api/cloud/sync', { method: 'POST', body: { schedule: $('#ghSched')?.checked !== false } });
-  }, (r) => r.pages_warning ? `⚠️ ${r.pages_warning}` : `✅ Subidos ${r.variables.length} ajustes y ${r.secrets.length} claves`));
-  $('#ghSched')?.addEventListener('change', (e) => act(e.target, () => api('/api/cloud/schedule', { method: 'POST', body: { enabled: e.target.checked } }), (r) => r.schedule ? '✅ Escaneo automático activado' : 'Escaneo automático pausado'));
-  $('#ghDemo')?.addEventListener('click', (e) => act(e.currentTarget, () => api('/api/cloud/run', { method: 'POST', body: { demo: true } }), () => '🔔 Prueba lanzada: el aviso llegará en 1–2 minutos'));
-  $('#ghRun')?.addEventListener('click', (e) => act(e.currentTarget, () => api('/api/cloud/run', { method: 'POST', body: { demo: false } }), () => '✈️ Escaneo lanzado en GitHub (unos minutos)'));
-  $('#ghShare')?.addEventListener('click', () => shareText('Chollos de vuelos', '✈️ Mira estos chollos de vuelos', c.pages_url));
-  const setPw = (btn, pw) => act(btn, async () => {
-    S.settings = await api('/api/settings', { method: 'PUT', body: { site_password: pw, publish_site: true } });
-    await api('/api/cloud/sync', { method: 'POST', body: { schedule: c.schedule_enabled !== false } });
-    await api('/api/cloud/run', { method: 'POST', body: { demo: false } }).catch(() => {});
-    return true;
-  }, () => (pw ? '🔒 Web privada: en unos minutos te pedirá la contraseña (solo una vez por dispositivo)' : 'La web vuelve a ser pública'));
-  $('#ghPwSave')?.addEventListener('click', (e) => { const pw = $('#ghPw').value; if (pw.length < 10) { toast('Usa al menos 10 caracteres (protege también tu token de GitHub).'); return; } setPw(e.currentTarget, pw); });
-  $('#ghPwOff')?.addEventListener('click', (e) => { if (confirm('¿Quitar la contraseña? Cualquiera con el enlace podrá ver tus precios.')) setPw(e.currentTarget, ''); });
-}
-
-/* =================== ASISTENTE INICIAL =================== */
-function onboarding() {
-  const st = { step: 0, origins: [...(S.settings.origins || [])], dests: [], trip: S.settings.trip_type || 'both', min: S.settings.min_nights, max: S.settings.max_nights, bag: S.settings.baggage, pax: pax(), ntfy: '' };
-  const popular = ['LON', 'PAR', 'ROM', 'LIS', 'AMS', 'BER', 'NYC', 'CUN', 'BKK', 'TYO', 'REK', 'MLE', 'DPS', 'MEX', 'BUE', 'DXB', 'IST', 'ATH', 'PRG', 'MRU'];
-  const steps = [
-    () => `<h2>¡Bienvenido! ¿Desde dónde sueles volar?</h2><p class="muted">Elige uno o varios aeropuertos. Luego puedes cambiarlo.</p>
-      <div class="chips">${S.meta.spain_origins.map((c) => `<button class="chip ${st.origins.includes(c.code) ? 'on' : ''}" data-o="${c.code}">${esc(c.name)}</button>`).join('')}</div>`,
-    () => `<h2>¿A dónde te gustaría ir?</h2><p class="muted">Pulsa los que te interesen o busca cualquier ciudad o país. Vigilaremos cada día del año.</p>
-      <div class="chips">${popular.map((c) => `<button class="chip ${st.dests.includes(c) ? 'on' : ''}" data-d="${c}">${flag(cityInfo(c).country_code)} ${esc(cityName(c))}</button>`).join('')}</div>
-      <div class="row" style="margin-top:12px"><div style="flex:1"><input id="obIn" placeholder="Otra ciudad o país…"></div><button class="btn" id="obAdd">${ic('plus')}</button></div><div class="small muted" id="obExtra">${st.dests.filter((d) => !popular.includes(d)).map(cityName).join(', ')}</div>`,
-    () => `<h2>¿Cómo viajas normalmente?</h2>
-      <div class="grid-form" style="margin-top:10px">
-        <label class="f">Vigilar<select id="obTrip"><option value="both" ${st.trip === 'both' ? 'selected' : ''}>Ida y vuelta + solo ida</option><option value="rt" ${st.trip === 'rt' ? 'selected' : ''}>Ida y vuelta</option><option value="ow" ${st.trip === 'ow' ? 'selected' : ''}>Solo ida</option></select></label>
-        <label class="f">Noches (mín.)<input id="obMin" type="number" min="1" value="${st.min}"></label><label class="f">Noches (máx.)<input id="obMax" type="number" min="1" value="${st.max}"></label>
-      </div><div style="margin-top:14px">${paxBagControl('obPB', st.pax, st.bag)}</div>`,
-    () => `<h2>¿Cómo quieres recibir los avisos?</h2><p class="muted">Sin instalar ninguna app: notificaciones en este ordenador y, si quieres, email.</p>
-      <button class="btn primary" id="obPush" ${pushSupport().ok ? '' : 'disabled'}>🔔 Activar notificaciones aquí</button> <span class="small muted" id="obPushRes">${pushSupport().ok ? '' : esc(pushSupport().reason)}</span>
-      <div class="grid-form" style="margin-top:14px"><label class="f">Tu email (opcional)<input id="obEmail" type="email" placeholder="tu@gmail.com" value="${esc(st.email || '')}"></label>
-      <label class="f">Contraseña de aplicación de Google<input id="obPass" type="password" placeholder="16 letras"></label></div>
-      <p class="tiny muted">La contraseña de aplicación se crea en <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">myaccount.google.com/apppasswords</a>. Para el móvil: Ajustes → Avisos → «Añadir tu móvil».</p>`,
-  ];
-  const draw = () => {
-    openSheet(`<div class="sh-head"><h2>✨ Configura tu buscador</h2><button class="btn icon ghost close" data-close>${ic('x')}</button></div>
-    <div class="sh-body wizard"><div class="steps">${steps.map((_, i) => `<i class="${i <= st.step ? 'on' : ''}"></i>`).join('')}</div>${steps[st.step]()}
-    <div class="row end" style="margin-top:8px">${st.step ? '<button class="btn ghost" id="obBack">Atrás</button>' : ''}<button class="btn primary" id="obNext">${st.step === steps.length - 1 ? 'Empezar a vigilar 🚀' : 'Siguiente'}</button></div></div>`);
-    const sh = $('#sheet');
-    sh.onclick = (e) => {
-      const o = e.target.closest('[data-o]'); if (o) { const c = o.dataset.o; st.origins = st.origins.includes(c) ? st.origins.filter((x) => x !== c) : [...st.origins, c]; o.classList.toggle('on'); }
-      const d = e.target.closest('[data-d]'); if (d) { const c = d.dataset.d; st.dests = st.dests.includes(c) ? st.dests.filter((x) => x !== c) : [...st.dests, c]; d.classList.toggle('on'); }
-    };
-    if ($('#obIn')) { attachAC($('#obIn')); $('#obAdd').onclick = () => { const r = resolvePlace($('#obIn').value); if (r.destinations) st.dests.push(...r.destinations); else if (r.country) st.dests.push(...S.catalog.filter((c) => c.country_code === r.country).map((c) => c.code)); else return toast('Elige de la lista'); $('#obIn').value = ''; $('#obExtra').textContent = st.dests.filter((x) => !popular.includes(x)).map(cityName).join(', '); }; }
-    $('#obBack')?.addEventListener('click', () => { st.step--; draw(); });
-    $('#obPush')?.addEventListener('click', async (e) => {
-      e.currentTarget.disabled = true;
-      try { const key = await api('/api/push/key'); const sub = await subscribePush('/sw.js', key.public_key); await api('/api/push/devices', { method: 'POST', body: { subscription: sub, name: deviceName() } }); $('#obPushRes').textContent = '✅ Activadas'; }
-      catch (err) { $('#obPushRes').textContent = err.message; e.currentTarget.disabled = false; }
-    });
-    $('#obNext').onclick = async () => {
-      if (st.step === 0 && !st.origins.length) return toast('Elige al menos un aeropuerto');
-      if (st.step === 1 && !st.dests.length) return toast('Elige al menos un destino');
-      if (st.step === 2) { st.trip = $('#obTrip').value; st.min = +$('#obMin').value; st.max = +$('#obMax').value; const pb = readPaxBag($('#obPB')); st.pax = pb.pax; st.bag = pb.baggage; }
-      if (st.step === 3) {
-        const em = $('#obEmail').value.trim(), pw = $('#obPass').value.replace(/\s+/g, '');
-        const mail = em && pw ? { email_to: em, smtp_password: pw, smtp_user: em, smtp_from: em, smtp_host: /@(gmail|googlemail)\.com$/i.test(em) ? 'smtp.gmail.com' : '', smtp_port: 587 } : {};
-        await api('/api/settings', { method: 'PUT', body: { origins: st.origins, trip_type: st.trip, min_nights: st.min, max_nights: st.max, passengers: st.pax, baggage: st.bag, onboarded: true, ...mail } });
-        await api('/api/destinations', { method: 'POST', body: { codes: [...new Set(st.dests)] } });
-        S.settings = await api('/api/settings'); closeSheet(); await startScan(); route(true); return;
-      }
-      st.step++; draw();
-    };
-  };
-  draw();
-}
-
-/* =================== web pública (modo estático) =================== */
-function setupStaticUI() {
-  document.body.classList.add('is-static');
-  $$('[data-view="watches"]').forEach((a) => a.remove());
-  $$('[data-view="destinations"]').forEach((a) => { a.lastChild.textContent = 'Destinos'; });
-  $$('[data-view="settings"]').forEach((a) => { a.lastChild.textContent = S.private ? 'Ajustes' : 'Preferencias'; });
-  ['#scanBtn', '#scanBtnM', '#logoutBtn'].forEach((id) => $(id)?.classList.add('hidden'));
-}
-VIEWS.prefs = null;
+VIEWS.destinations = (el) => destinationsView(el);
+VIEWS.settings = (el) => settingsView(el);
 
 /* =================== arranque =================== */
 window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); S.installPrompt = e; });
-if (!window.STATIC && 'serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 (async function init() {
   paintIcons();
-  if (window.STATIC) await siteUnlock();
   try {
-    const [cat, countries, settings, meta] = await Promise.all([api('/api/catalog?limit=500'), api('/api/catalog/countries'), api('/api/settings'), api('/api/meta')]);
+    const [cat, countries, settings, meta] = await Promise.all([api('/api/catalog'), api('/api/catalog/countries'), api('/api/settings'), api('/api/meta')]);
     Object.assign(S, { catalog: cat, countries, settings, meta });
-    if (S.static) setupStaticUI();
     await refreshStatus();
     route(true);
-  } catch (e) { $('.content').innerHTML = `<div class="card empty"><h3>No se pudo conectar con el servidor</h3><p>${esc(e.message)}</p></div>`; }
+  } catch (e) { $('.content').innerHTML = `<div class="card empty"><h3>No se pudieron cargar los datos</h3><p>${esc(e.message)}</p></div>`; }
 })();

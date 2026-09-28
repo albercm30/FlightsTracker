@@ -1,7 +1,6 @@
 """Base de datos SQLite (sin dependencias externas), migraciones y ajustes."""
 import json
 import os
-import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -119,13 +118,10 @@ CREATE TABLE IF NOT EXISTS scans (
 
 # Ajustes por defecto. Los que tienen variable de entorno se precargan desde ella la primera vez.
 DEFAULT_SETTINGS = {
-    "onboarded": False,
     "origins": ["MAD", "BCN"],
     "currency": "eur",
     "provider": "auto",            # auto | travelpayouts | demo
     "travelpayouts_token": "",
-    "travelpayouts_marker": "",
-    "serpapi_key": "",
     "trip_type": "both",           # ow | rt | both  (qué vigilan los escaneos automáticos)
     "min_nights": 3,               # ida y vuelta: estancia mínima
     "max_nights": 10,              # ida y vuelta: estancia máxima
@@ -156,20 +152,7 @@ DEFAULT_SETTINGS = {
     "resident_discount": "",       # "" | canarias | baleares  (75 % en vuelos nacionales)
     "quiet_hours": "",             # p. ej. "23-8": sin avisos por la noche (se envían después)
     "timezone": "Europe/Madrid",
-    "vapid_public": "",            # notificaciones propias (Web Push): clave pública
-    "vapid_private": "",           # ... y privada (se genera sola)
-    "push_subscriptions": "[]",    # dispositivos suscritos (JSON)
-    "site_url": "",                # dirección de la web pública (para abrirla al tocar un aviso)
-    "github_token": "",
-    "github_repo": "",
-    "site_password": "",           # contraseña de tu web privada (vacío = web pública)
-    "cloud_synced_at": "",         # última sincronización con GitHub (para traer cambios hechos desde el móvil)
-    "publish_site": True,
-    "site_title": "Chollos de vuelos",
-    "telegram_bot_token": "",
-    "telegram_chat_id": "",
-    "ntfy_server": "https://ntfy.sh",
-    "ntfy_topic": "",
+    "site_url": "",                # dirección de tu web (enlace en los emails)
     "smtp_host": "",
     "smtp_port": 587,
     "smtp_user": "",
@@ -180,12 +163,6 @@ DEFAULT_SETTINGS = {
 
 ENV_MAP = {
     "travelpayouts_token": "TRAVELPAYOUTS_TOKEN",
-    "travelpayouts_marker": "TRAVELPAYOUTS_MARKER",
-    "serpapi_key": "SERPAPI_KEY",
-    "telegram_bot_token": "TELEGRAM_BOT_TOKEN",
-    "telegram_chat_id": "TELEGRAM_CHAT_ID",
-    "ntfy_topic": "NTFY_TOPIC",
-    "ntfy_server": "NTFY_SERVER",
     "smtp_host": "SMTP_HOST",
     "smtp_port": "SMTP_PORT",
     "smtp_user": "SMTP_USER",
@@ -203,13 +180,11 @@ ENV_MAP = {
     "baggage": "BAGGAGE",
     "quiet_hours": "QUIET_HOURS",
     "months_ahead": "MONTHS_AHEAD",
-    "vapid_public": "VAPID_PUBLIC_KEY",
-    "vapid_private": "VAPID_PRIVATE_KEY",
-    "push_subscriptions": "PUSH_SUBSCRIPTIONS",
     "site_url": "SITE_URL",
     "direct_only": "DIRECT_ONLY",
     "deal_pct": "DEAL_PCT",
     "min_days_ahead": "MIN_DAYS_AHEAD",
+    "max_days_ahead": "MAX_DAYS_AHEAD",
     "alert_level": "ALERT_LEVEL",
     "alert_drops": "ALERT_DROPS",
     "max_stops": "MAX_STOPS",
@@ -218,8 +193,7 @@ ENV_MAP = {
     "exclude_airlines": "EXCLUDE_AIRLINES",
 }
 
-SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password", "github_token",
-               "vapid_private", "push_subscriptions", "site_password"}
+SECRET_KEYS = {"travelpayouts_token", "smtp_password"}
 CHOICES = {
     "trip_type": {"ow", "rt", "both"},
     "baggage": {"personal", "cabin", "checked", "cabin_checked"},
@@ -316,17 +290,6 @@ def init(path: str):
         if "origins" not in existing and os.environ.get("ORIGINS"):
             origins = [o.strip().upper() for o in os.environ["ORIGINS"].split(",") if o.strip()]
             c.execute("UPDATE settings SET value=? WHERE key='origins'", (json.dumps(origins),))
-        pub = c.execute("SELECT value FROM settings WHERE key='vapid_public'").fetchone()
-        if not pub or not json.loads(pub[0]):
-            try:
-                from .webpush import generate_vapid
-                priv_k, pub_k = generate_vapid()
-                c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('vapid_private', ?)", (json.dumps(priv_k),))
-                c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('vapid_public', ?)", (json.dumps(pub_k),))
-            except ImportError:
-                pass
-        if not c.execute("SELECT 1 FROM settings WHERE key='_secret_key'").fetchone():
-            c.execute("INSERT INTO settings(key, value) VALUES('_secret_key', ?)", (json.dumps(secrets.token_hex(32)),))
 
 
 @contextmanager
@@ -361,16 +324,14 @@ def execute(sql, params=()):
 def apply_env_config():
     """Modo «configuración por variables de entorno» (p. ej. GitHub Actions): aplica en cada
     arranque los ajustes definidos en el entorno y sincroniza DESTINATIONS con la lista."""
-    vals = {k: os.environ[e] for k, e in ENV_MAP.items() if os.environ.get(e)}
+    if os.environ.get("GITHUB_ACTIONS"):
+        # En GitHub la configuración ES la de las variables/secrets: lo que no esté, vuelve al valor por defecto
+        # (así, si quitas un filtro desde la web, deja de aplicarse aunque la base de datos venga de la caché)
+        vals = {k: os.environ.get(e) or DEFAULT_SETTINGS[k] for k, e in ENV_MAP.items()}
+    else:
+        vals = {k: os.environ[e] for k, e in ENV_MAP.items() if os.environ.get(e)}
     if os.environ.get("ORIGINS"):
         vals["origins"] = os.environ["ORIGINS"]
-    from .sitecrypt import email_from_env
-    em = email_from_env()  # email configurado desde la web privada (cifrado)
-    if em and em.get("email_to"):
-        to = em["email_to"].strip()
-        vals.update(email_to=to, smtp_password=(em.get("smtp_password") or "").replace(" ", ""),
-                    smtp_host=em.get("smtp_host") or "smtp.gmail.com", smtp_port=em.get("smtp_port") or 587,
-                    smtp_user=em.get("smtp_user") or to, smtp_from=em.get("smtp_from") or to)
     if vals:
         update_settings(vals)
     codes = [c.strip().upper() for c in os.environ.get("DESTINATIONS", "").split(",") if c.strip()]
@@ -383,11 +344,6 @@ def apply_env_config():
                           "VALUES (?,?,?,1,?)", (code, info["name"], info["country"], now_iso()))
             c.execute(f"UPDATE destinations SET enabled = CASE WHEN code IN ({','.join('?' * len(codes))}) "
                       "THEN 1 ELSE 0 END", codes)
-
-
-def secret_key() -> str:
-    r = one("SELECT value FROM settings WHERE key='_secret_key'")
-    return json.loads(r["value"]) if r else "dev"
 
 
 # ---------------- Ajustes ----------------

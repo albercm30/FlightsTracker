@@ -8,4 +8,4 @@ def get_provider(settings: dict) -> PriceProvider:
     token = settings.get("travelpayouts_token") or ""
     if choice == "demo" or (choice == "auto" and not token):
         return DemoProvider()
-    return TravelpayoutsProvider(token, settings.get("travelpayouts_marker") or "")
+    return TravelpayoutsProvider(token)

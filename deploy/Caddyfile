@@ -1,0 +1,5 @@
+# Caddy obtiene y renueva el certificado HTTPS automáticamente para tu dominio.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy flight-tracker:8000
+}

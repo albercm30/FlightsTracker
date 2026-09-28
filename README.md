@@ -1,173 +1,132 @@
 # ✈️ Flight Tracker
 
-Buscador y vigilante de precios de vuelos **autoalojado**. Eliges desde dónde sales (un aeropuerto, varios o toda España) y tus destinos favoritos en cualquier país. La app:
+Tu buscador y vigilante de vuelos **personal**. Le dices desde dónde sales (un aeropuerto, varios o toda España) y a dónde te gustaría ir. La app:
 
-- vigila el **precio más barato de cada día de los próximos 12 meses** para cada ruta;
-- te dice **qué día puedes volar más barato** a cualquier ciudad o país («Mejor día»);
-- detecta **chollos, bajadas de precio, mínimos históricos** y precios por debajo de tu objetivo;
-- guarda el **historial de cambios** de cada fecha (sube/baja) y te deja **vigilar vuelos concretos**;
-- te **avisa con antelación** por Telegram, notificación push (ntfy) o email;
-- opcionalmente comprueba el **precio real en vivo en Google Flights**, con su rango habitual y su histórico de precios.
+- 🗓️ vigila el **precio más barato de cada día de los próximos 12 meses**, **solo ida y también ida y vuelta**;
+- 🔎 te dice **qué día puedes volar más barato** a una ciudad o a un país entero, con matriz de flexibilidad por noches (**Mejor día**);
+- 🧭 compara decenas de destinos a la vez en un **mapa**, por zona, temática o presupuesto (**Explorar**);
+- 🏖️ calcula tus **puentes y festivos** (nacionales y de tu comunidad) y busca la escapada más barata para cada uno;
+- 🧳 estima el **equipaje incluido** (mochila, cabina, facturada) y el **precio total real** por aerolínea y viajeros;
+- 🔥 detecta **chollos, bajadas, mínimos históricos** y precios bajo tu objetivo, y te **avisa con antelación** por Telegram, push al móvil (ntfy) o email;
+- 👀 te deja **vigilar vuelos concretos** (ida o ida y vuelta) y te avisa si suben o bajan;
+- ⚡ comprueba el **precio real en Google Flights** con su rango habitual y su historial (opcional, con SerpApi);
+- 📱 funciona en el **móvil como una app** (PWA) y se puede **publicar online** con contraseña.
 
-| Panel | Mejor día |
+| Inicio | Mejor día |
 |---|---|
-| ![Panel](docs/panel.jpg) | ![Mejor día](docs/mejor-dia.jpg) |
-| **Calendario de precios** | **Detalle de un día** |
-| ![Calendario](docs/calendario.jpg) | ![Detalle](docs/detalle.jpg) |
+| ![Inicio](docs/inicio.jpg) | ![Mejor día](docs/mejor-dia.jpg) |
+| **Detalle, equipaje y cuadrícula de fechas** | **Explorar destinos** |
+| ![Detalle](docs/detalle.jpg) | ![Explorar](docs/explorar.jpg) |
+| **Calendario de precios** | **Puentes y festivos** |
+| ![Calendario](docs/calendario.jpg) | ![Festivos](docs/festivos.jpg) |
 
 ---
 
-## 🚀 Arranque rápido (5 minutos)
+## 🚀 Arranque rápido
 
-Necesitas **Python 3.10 o superior** ([descargar](https://www.python.org/downloads/)).
+Necesitas **Python 3.10 o superior** ([descargar](https://www.python.org/downloads/); en Windows marca *Add python.exe to PATH*).
+
+- **Windows:** doble clic en **`iniciar.bat`**.
+- **macOS / Linux:** `./iniciar.sh`.
+
+Se instala todo solo y se abre **http://localhost:8000**. Un asistente te pregunta:
+
+1. desde dónde vuelas;
+2. a dónde quieres ir;
+3. cómo viajas (ida y vuelta, noches, viajeros, equipaje);
+4. cómo quieres recibir los avisos.
+
+<details><summary>Manualmente</summary>
 
 ```bash
-git clone https://github.com/TU_USUARIO/flight-tracker.git
-cd flight-tracker
 python -m venv .venv
-# Windows:            .venv\Scripts\activate
-# macOS / Linux:      source .venv/bin/activate
+.venv\Scripts\activate          # Windows  (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
 python -m app
 ```
+</details>
 
-Abre **http://localhost:8000**, ve a **Destinos**, añade ciudades o países y pulsa **Escanear ahora**.
+Sin configurar nada funciona en **modo demo**, con un simulador de precios realista. Para usar **precios reales** solo necesitas un token gratuito de Travelpayouts (ver abajo).
 
-> Sin configurar nada, la app funciona en **modo demo**, con precios simulados por un modelo realista (ver más abajo). Para usar precios reales solo necesitas un token gratuito de Travelpayouts.
+## 🌍 Usarla online (desde el móvil, fuera de casa)
 
-### Con Docker
+Mira **[DEPLOY.md](DEPLOY.md)**. Hay tres opciones:
 
-```bash
-cp .env.example .env      # rellena lo que quieras
-docker compose up -d --build
-```
+- **Railway**: unos 5 $/mes, se despliega desde GitHub y es la más sencilla.
+- **Tu PC con un túnel** gratuito (Cloudflare o Tailscale).
+- **Un servidor propio** con Docker y HTTPS automático.
 
-Los datos se guardan en `./data/flights.db`.
-
----
-
-## 🔑 Configurar precios reales (gratis)
-
-### 1. Travelpayouts / Aviasales Data API (recomendado para los escaneos)
-
-1. Regístrate gratis en [travelpayouts.com](https://www.travelpayouts.com).
-2. Entra en tu perfil y copia tu **API token** (en *Profile → API token* o *Tools → API*).
-3. Pégalo en **Ajustes → Fuente de precios → Token de Travelpayouts** (o en `.env` como `TRAVELPAYOUTS_TOKEN`).
-
-Esta API da el precio más barato por día que han encontrado los usuarios de Aviasales en los últimos días (datos en caché). Es gratuita y te permite ver el calendario de todo el año sin pagar por búsqueda. En rutas muy poco buscadas puede haber días sin datos.
-
-### 2. SerpApi – Google Flights (opcional, para comprobar antes de comprar)
-
-1. Crea una cuenta en [serpapi.com](https://serpapi.com). El plan gratuito incluye 250 búsquedas al mes.
-2. Pega la clave en **Ajustes → Clave SerpApi**.
-3. En el detalle de cualquier día aparecerá el botón **«Comprobar precio real (Google Flights)»**, que muestra:
-   - el precio más barato **ahora mismo**, con aerolíneas, escalas y horarios;
-   - si Google considera el precio **bajo, normal o alto**, y su **rango habitual**;
-   - el **histórico de precios de Google** para ese vuelo en las últimas semanas.
-
-Solo se gasta una búsqueda cuando pulsas el botón; los escaneos automáticos no la usan.
-
-> ℹ️ La API *self-service* de Amadeus, que muchos tutoriales usan, cerró su portal el 17 de julio de 2026. Por eso este proyecto no la usa.
+Pon siempre `APP_PASSWORD`: la web pedirá contraseña.
 
 ---
 
-## 🔔 Configurar avisos
+## 🔑 Fuentes de precios
 
-Puedes activar uno o varios canales. Después pulsa **«Enviar aviso de prueba»** en Ajustes.
+| Fuente | Para qué | Coste |
+|---|---|---|
+| **Travelpayouts / Aviasales Data API** | Escaneos automáticos, calendario, Mejor día, Explorar | Gratis (token) |
+| **SerpApi – Google Flights** (opcional) | «Comprobar precio real»: precio en vivo, nivel bajo/normal/alto, rango habitual, historial, filtro de maletas y clase | 250 búsquedas/mes gratis |
+| **Demo** | Probar todo sin claves | Gratis |
 
-**Telegram (recomendado)**
-1. En Telegram, habla con **@BotFather**, envía `/newbot` y copia el **token**.
-2. Escribe cualquier mensaje a tu nuevo bot.
-3. Abre `https://api.telegram.org/bot<TOKEN>/getUpdates` y copia el número de `"chat":{"id": ...}`.
-4. Pega el token y el chat id en Ajustes.
+1. **Travelpayouts:** regístrate en [travelpayouts.com](https://www.travelpayouts.com), copia tu *API token* y pégalo en **Ajustes → Fuente de precios**.
+2. **SerpApi:** crea una cuenta en [serpapi.com](https://serpapi.com) y pega la clave en Ajustes.
 
-**ntfy (push al móvil sin registro)**
-1. Instala la app **ntfy** (Android/iOS).
-2. Suscríbete a un tema difícil de adivinar, por ejemplo `vuelos-alber-8k2x`.
-3. Pon el mismo tema en Ajustes.
+> La API *self-service* de Amadeus cerró su portal el 17 de julio de 2026, por eso no se usa.
 
-**Email**
-Configura el servidor SMTP. En Gmail necesitas una [contraseña de aplicación](https://myaccount.google.com/apppasswords): host `smtp.gmail.com`, puerto `587`.
+## 🧳 Equipaje
 
-Cada escaneo envía **un único resumen** con las mejores ofertas, para no llenarte de mensajes.
+Las APIs de precios **no dicen qué equipaje incluye cada billete**. Flight Tracker lo **estima** con una tabla de políticas por aerolínea (Ryanair, Vueling, easyJet, Iberia, Air Europa, Binter, Emirates, Qatar…). Así:
 
----
+- muestra qué va incluido en cada vuelo (🎒 mochila · 🧳 cabina · 🛄 facturada);
+- calcula el **precio total estimado** según tu opción de equipaje, ida o ida y vuelta, y número de viajeros, y ordena los resultados por ese total.
 
-## 🧠 Cómo decide qué es una buena oferta
+Son rangos orientativos de reservar online con antelación. En junio de 2026 la UE acordó que el precio mostrado incluya por defecto una maleta de cabina de 7 kg, pero **aún no se aplica**. Con SerpApi, «Comprobar precio real» pide a Google Flights precios que ya incluyen tu maleta de cabina.
 
-En cada escaneo, para cada ruta origen → destino, la app guarda el precio más barato de cada día y lo compara con:
+## 🔔 Avisos
 
-| Alerta | Cuándo salta |
+| Alerta | Cuándo |
 |---|---|
-| 🏆 **Mínimo histórico** | El precio más bajo visto nunca para esa ruta. |
-| 🔥 **Chollo** | Un X % por debajo del precio habitual (mediana del año) de la ruta. Por defecto, 30 %. |
-| 🎯 **Bajo tu precio** | Por debajo del precio máximo que fijaste para ese destino. |
-| 📉 **Bajada** | El mismo día ha bajado un X % desde el escaneo anterior. Por defecto, 15 %. |
-| 👀 **Vuelo vigilado** | Un vuelo concreto que sigues sube o baja un X %, o baja de tu objetivo. |
+| 🏆 Mínimo histórico | El precio más bajo visto nunca en esa ruta |
+| 🔥 Chollo | Un X % por debajo del precio habitual del año (por defecto, 30 %) |
+| 🎯 Bajo tu precio | Por debajo del máximo que pusiste para ese destino |
+| 📉 Bajada | Ese mismo día ha bajado un X % desde el escaneo anterior |
+| 👀 Vuelo vigilado | Una fecha concreta que sigues sube o baja un X %, o baja de tu objetivo |
 
-**«Avisar con tiempo»:** solo se avisa de vuelos que salen dentro de al menos N días (por defecto, 14). Así tienes margen para reservar.
+- Solo avisa de vuelos con **al menos N días de antelación** (por defecto, 14), para que te dé tiempo a reservar.
+- Tiene **anti-spam**: no repite un aviso salvo que baje otro X %.
+- Tiene **horas de silencio** (por ejemplo, `23-8`): lo que se detecte de noche se envía por la mañana.
+- Envía **un único resumen** por escaneo.
 
-**Anti-spam:** no se repite un aviso salvo que el precio baje otro X %, y tras avisar de una ruta solo se vuelve a avisar si aparece algo claramente mejor.
+**Canales:**
 
-**Consejo «¿Compro ya o espero?»:** se basa en:
-- el percentil del precio frente a todos los días del año;
+- **Telegram:** crea un bot con @BotFather y consigue tu *chat id* abriendo `https://api.telegram.org/bot<TOKEN>/getUpdates`.
+- **ntfy:** app gratuita; te suscribes a un tema privado.
+- **Email** por SMTP. En Gmail necesitas una contraseña de aplicación.
+
+## 🧠 ¿Compro ya o espero?
+
+Cada resultado incluye un consejo orientativo basado en:
+
+- en qué percentil está el precio frente al resto de fechas;
 - el histórico registrado para esa fecha;
-- la opinión de Google (si usas SerpApi);
-- la antelación: 21–90 días suele ser buena ventana para vuelos cortos y 60–170 días para largo radio.
+- la opinión de Google Flights, si usas SerpApi;
+- la antelación: suele haber buena ventana a 21–90 días en vuelos cortos y a 60–170 días en largo radio.
 
-Es orientativo: ningún sistema puede garantizar el precio futuro de un vuelo.
+Nadie puede garantizar el precio futuro de un vuelo.
 
----
+## 🎲 Modo demo realista
 
-## 🎲 El modo demo (simulación realista)
+El simulador tiene en cuenta:
 
-Mientras no haya token, el proveedor `demo` genera precios con un modelo que reproduce los patrones reales de las tarifas:
+- la distancia real y la competencia low-cost;
+- los hubs con vuelo directo (MAD y BCN);
+- las temporadas por región, los destinos de playa y los de sol en invierno (Canarias, Madeira…);
+- Semana Santa, Navidad y los puentes;
+- el día de la semana y la curva de antelación;
+- rebajas de aerolíneas, tarifas flash y escalones de tarifa;
+- las combinaciones de ida y vuelta.
 
-- **Distancia real** entre ciudades, con tramos distintos para low-cost, medio radio y largo radio.
-- **Competencia de la ruta:** las rutas low-cost muy disputadas salen más baratas, y hay recargo si hace falta conexión desde un aeropuerto regional.
-- **Temporadas por región:** los destinos de playa se disparan en verano, los de sol en invierno (Canarias, Madeira, Egipto…) suben en invierno, y hay rutas estacionales como las islas griegas o Laponia.
-- **Festivos españoles:** Semana Santa (calculada para cada año), Navidad, Reyes, puentes, 15 de agosto y el inicio de las vacaciones.
-- **Día de la semana:** martes y miércoles son más baratos; viernes y domingo, más caros.
-- **Curva de antelación:** caro con demasiada antelación, más barato en la «ventana buena» y subida fuerte en las últimas semanas.
-- **Evolución en el tiempo:**
-  - los precios cambian poco a poco entre escaneos;
-  - hay rebajas de aerolínea que duran una semana;
-  - aparece alguna tarifa flash, muy de vez en cuando.
-- **Escalones de tarifa** como en las webs reales: 29, 34, 39… 199, 219…
-- **Histórico simulado** de unas semanas para que los gráficos funcionen desde el primer minuto.
-
-⚠️ Aun así, **son precios simulados**. Úsalo para probar la app; para reservar, usa precios reales.
-
----
-
-## ☁️ ¿Dónde dejarlo funcionando 24/7?
-
-El programa escanea solo cada N horas mientras está encendido. Opciones:
-
-- **Tu PC o un portátil viejo** que esté siempre encendido: `python -m app`.
-- **Raspberry Pi o NAS** con Docker: `docker compose up -d`.
-- **Un VPS barato** (Hetzner, Contabo, Oracle Cloud Free…) con Docker. Si lo expones a internet, pon `APP_PASSWORD` en `.env`.
-- **Solo escaneos con cron**, sin dejar la web abierta: `python -m app scan`. Hace un escaneo, envía los avisos y termina.
-
-> Los servicios gratuitos que «duermen» la app cuando no hay visitas (algunos planes free de Render, Railway…) paran también los escaneos automáticos.
-
-**Coste en peticiones:** cada escaneo hace `orígenes × destinos × meses` peticiones. Por ejemplo, 2 × 20 × 12 = 480 peticiones, unos 4 minutos con 0,5 s de pausa. Con «Toda España» (12 orígenes) serán bastantes más. Sube la pausa si la API te devuelve error 429.
-
----
-
-## 📤 Subirlo a GitHub
-
-```bash
-cd flight-tracker
-git init
-git add .
-git commit -m "Flight Tracker: primera versión"
-git branch -M main
-git remote add origin https://github.com/TU_USUARIO/flight-tracker.git
-git push -u origin main
-```
-
-Tu `.env` y la base de datos **no se suben**, porque están en `.gitignore`. Los tests se ejecutan automáticamente en GitHub Actions en cada push.
+También genera unas semanas de histórico. Úsalo para probar la app: **no son precios reales**.
 
 ---
 
@@ -175,29 +134,28 @@ Tu `.env` y la base de datos **no se suben**, porque están en `.gitignore`. Los
 
 ```
 app/
-  __init__.py        # API web (Flask) y arranque
-  __main__.py        # python -m app  /  python -m app scan
-  db.py              # SQLite + ajustes
-  tracker.py         # escaneo, detección de ofertas, «Mejor día», consejos
-  notifier.py        # Telegram, ntfy, email
-  scheduler.py       # escaneo automático en segundo plano
-  catalog.py         # ~150 ciudades con coordenadas, países, orígenes de España
-  providers/
-    travelpayouts.py # precios reales (Aviasales Data API)
-    serpapi.py       # Google Flights en vivo + histórico (opcional)
-    demo.py          # simulación realista
-  static/            # interfaz web (HTML + CSS + JS sin dependencias)
-tests/               # python -m pytest   (o python -m unittest)
+  __init__.py        API web (Flask), login, PWA
+  tracker.py         escaneos, alertas, motor de búsqueda (Mejor día / Explorar / Festivos), consejos
+  airlines.py        aerolíneas y políticas de equipaje (estimadas)
+  holidays.py        festivos de España y cálculo de puentes
+  catalog.py         ~150 ciudades con coordenadas, temáticas, orígenes de España
+  notifier.py        Telegram, ntfy, email (+ horas de silencio)
+  scheduler.py       escaneo automático
+  db.py              SQLite, ajustes y migraciones automáticas
+  providers/         travelpayouts.py (real) · serpapi.py (Google Flights) · demo.py (simulación)
+  static/            interfaz (HTML/CSS/JS sin dependencias), service worker, iconos
+tests/               python -m pytest   (o python -m unittest)
+DEPLOY.md            cómo publicarla online
 ```
 
-**Añadir otra fuente de precios:** crea una clase en `app/providers/` con un método `fetch_month(origin, destination, "YYYY-MM", ...)` que devuelva `Quote`s y regístrala en `providers/__init__.py`.
+**Comandos útiles:**
 
-## ❓ Preguntas frecuentes
+- `python -m app` arranca la web.
+- `python -m app scan` hace un escaneo único y envía los avisos (útil con cron).
+- `python -m pytest` pasa los tests.
 
-- **¿Los códigos?** Son códigos IATA de **ciudad**: `LON` agrupa todos los aeropuertos de Londres, `TCI` es Tenerife (Norte + Sur), `NYC` es Nueva York… Puedes añadir cualquier código aunque no esté en la lista.
-- **¿Ida y vuelta?** Cámbialo en Ajustes → Tipo de viaje. El calendario mostrará el precio más barato de ida y vuelta según el día de salida.
-- **¿El precio es exacto?** Los datos de Travelpayouts vienen de búsquedas recientes y pueden haber cambiado. Usa «Comprobar precio real» o abre el enlace de reserva antes de pagar.
+**Actualizar desde una versión anterior:** tus destinos, alertas y ajustes se conservan. La base de datos se migra sola.
 
 ## Licencia
 
-MIT. Úsalo, modifícalo y compártelo libremente.
+MIT.

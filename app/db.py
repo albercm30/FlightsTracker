@@ -1,6 +1,7 @@
-"""Base de datos SQLite (sin dependencias externas) y gestión de ajustes."""
+"""Base de datos SQLite (sin dependencias externas), migraciones y ajustes."""
 import json
 import os
+import secrets
 import sqlite3
 import threading
 from contextlib import contextmanager
@@ -9,6 +10,7 @@ from datetime import datetime, timezone
 _lock = threading.RLock()
 _db_path = None
 
+# trip: "ow" = solo ida, "rt" = ida y vuelta
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
@@ -23,74 +25,81 @@ CREATE TABLE IF NOT EXISTS destinations (
     enabled     INTEGER NOT NULL DEFAULT 1,
     created_at  TEXT NOT NULL
 );
--- Precio actual (más barato) por ruta y día de salida
+-- Precio actual (más barato) por ruta, tipo de viaje y día de salida
 CREATE TABLE IF NOT EXISTS quotes (
     origin       TEXT NOT NULL,
     destination  TEXT NOT NULL,
+    trip         TEXT NOT NULL DEFAULT 'ow',
     depart_date  TEXT NOT NULL,
     return_date  TEXT,
+    nights       INTEGER,
     price        REAL NOT NULL,
     prev_price   REAL,
     lowest_price REAL,
     airline      TEXT,
     transfers    INTEGER,
+    return_transfers INTEGER,
     link         TEXT,
     provider     TEXT,
     first_seen   TEXT NOT NULL,
     updated_at   TEXT NOT NULL,
-    PRIMARY KEY (origin, destination, depart_date)
+    PRIMARY KEY (origin, destination, trip, depart_date)
 );
-CREATE INDEX IF NOT EXISTS idx_quotes_dest ON quotes(destination, price);
--- Resumen por ruta en cada escaneo (para el histórico)
+CREATE INDEX IF NOT EXISTS idx_quotes_dest ON quotes(destination, trip, price);
 CREATE TABLE IF NOT EXISTS route_stats (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     origin       TEXT NOT NULL,
     destination  TEXT NOT NULL,
+    trip         TEXT NOT NULL DEFAULT 'ow',
     scanned_at   TEXT NOT NULL,
     min_price    REAL,
     median_price REAL,
     count        INTEGER
 );
-CREATE INDEX IF NOT EXISTS idx_stats_route ON route_stats(origin, destination, scanned_at);
+CREATE INDEX IF NOT EXISTS idx_stats_route ON route_stats(origin, destination, trip, scanned_at);
+CREATE TABLE IF NOT EXISTS quote_history (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    origin       TEXT NOT NULL,
+    destination  TEXT NOT NULL,
+    trip         TEXT NOT NULL DEFAULT 'ow',
+    depart_date  TEXT NOT NULL,
+    price        REAL NOT NULL,
+    prev_price   REAL,
+    seen_at      TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_qh_route ON quote_history(origin, destination, trip, depart_date, seen_at);
+CREATE INDEX IF NOT EXISTS idx_qh_seen ON quote_history(seen_at);
+CREATE TABLE IF NOT EXISTS watches (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    origin       TEXT NOT NULL,
+    destination  TEXT NOT NULL,
+    trip         TEXT NOT NULL DEFAULT 'ow',
+    depart_date  TEXT NOT NULL,
+    return_date  TEXT NOT NULL DEFAULT '',
+    target_price REAL,
+    last_price   REAL,
+    note         TEXT,
+    created_at   TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_watch_unique ON watches(origin, destination, trip, depart_date, return_date);
 CREATE TABLE IF NOT EXISTS alerts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     created_at   TEXT NOT NULL,
     kind         TEXT NOT NULL,
     origin       TEXT NOT NULL,
     destination  TEXT NOT NULL,
+    trip         TEXT NOT NULL DEFAULT 'ow',
     depart_date  TEXT NOT NULL,
     return_date  TEXT,
     price        REAL NOT NULL,
     ref_price    REAL,
     message      TEXT,
     link         TEXT,
+    airline      TEXT,
     notified     INTEGER NOT NULL DEFAULT 0,
     read         INTEGER NOT NULL DEFAULT 0
 );
-CREATE INDEX IF NOT EXISTS idx_alerts_route ON alerts(origin, destination, depart_date);
--- Cada cambio de precio observado (histórico propio, crece desde el primer escaneo)
-CREATE TABLE IF NOT EXISTS quote_history (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    origin       TEXT NOT NULL,
-    destination  TEXT NOT NULL,
-    depart_date  TEXT NOT NULL,
-    price        REAL NOT NULL,
-    prev_price   REAL,
-    seen_at      TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_qh_route ON quote_history(origin, destination, depart_date, seen_at);
-CREATE INDEX IF NOT EXISTS idx_qh_seen ON quote_history(seen_at);
--- Vuelos concretos vigilados ("avísame si este día sube o baja")
-CREATE TABLE IF NOT EXISTS watches (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    origin       TEXT NOT NULL,
-    destination  TEXT NOT NULL,
-    depart_date  TEXT NOT NULL,
-    target_price REAL,
-    last_price   REAL,
-    created_at   TEXT NOT NULL,
-    UNIQUE(origin, destination, depart_date)
-);
+CREATE INDEX IF NOT EXISTS idx_alerts_route ON alerts(origin, destination, trip, depart_date);
 CREATE TABLE IF NOT EXISTS scans (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     started_at   TEXT NOT NULL,
@@ -104,29 +113,36 @@ CREATE TABLE IF NOT EXISTS scans (
 );
 """
 
-# Ajustes por defecto. Los que tienen variable de entorno se precargan desde ella
-# la primera vez (útil para no escribir secretos en la interfaz).
+# Ajustes por defecto. Los que tienen variable de entorno se precargan desde ella la primera vez.
 DEFAULT_SETTINGS = {
+    "onboarded": False,
     "origins": ["MAD", "BCN"],
     "currency": "eur",
     "provider": "auto",            # auto | travelpayouts | demo
     "travelpayouts_token": "",
     "travelpayouts_marker": "",
-    "serpapi_key": "",              # opcional: precio en vivo + histórico de Google Flights
-    "one_way": True,
+    "serpapi_key": "",
+    "trip_type": "both",           # ow | rt | both  (qué vigilan los escaneos automáticos)
+    "min_nights": 3,               # ida y vuelta: estancia mínima
+    "max_nights": 10,              # ida y vuelta: estancia máxima
+    "passengers": 1,
+    "baggage": "personal",         # personal | cabin | checked | cabin_checked
     "direct_only": False,
     "months_ahead": 12,
     "scan_interval_hours": 6,
     "request_delay_s": 0.5,
-    "min_days_ahead": 14,           # solo avisar de vuelos que salen dentro de >= N días
+    "min_days_ahead": 14,          # solo avisar de vuelos que salen dentro de >= N días
     "max_days_ahead": 365,
-    "drop_pct": 15,                 # bajada mínima respecto al precio anterior
-    "deal_pct": 30,                 # % por debajo de la mediana de la ruta = chollo
-    "realert_pct": 5,               # volver a avisar solo si baja otro X %
+    "drop_pct": 15,
+    "deal_pct": 30,
+    "realert_pct": 5,
     "max_alerts_per_route": 3,
     "notify_max_items": 10,
-    "watch_change_pct": 3,          # avisar si un vuelo vigilado cambia >= X %
-    "search_cache_hours": 3,        # el buscador reutiliza precios más recientes que esto
+    "watch_change_pct": 3,
+    "search_cache_hours": 3,
+    "holiday_region": "",
+    "quiet_hours": "",             # p. ej. "23-8": sin avisos por la noche (se envían después)
+    "timezone": "Europe/Madrid",
     "telegram_bot_token": "",
     "telegram_chat_id": "",
     "ntfy_server": "https://ntfy.sh",
@@ -154,34 +170,92 @@ ENV_MAP = {
     "smtp_from": "SMTP_FROM",
     "email_to": "EMAIL_TO",
     "provider": "PRICE_PROVIDER",
+    "holiday_region": "HOLIDAY_REGION",
+    "timezone": "TZ",
 }
 
 SECRET_KEYS = {"travelpayouts_token", "serpapi_key", "telegram_bot_token", "smtp_password"}
+CHOICES = {
+    "trip_type": {"ow", "rt", "both"},
+    "baggage": {"personal", "cabin", "checked", "cabin_checked"},
+    "provider": {"auto", "travelpayouts", "demo"},
+    "currency": {"eur", "usd", "gbp"},
+}
 
 
 def now_iso():
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
+def _columns(c, table):
+    return {r[1] for r in c.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate(c):
+    """Actualiza bases de datos de versiones anteriores sin perder lo importante."""
+    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    # v1 -> v2: quotes sin columna trip (es caché: se recrea y se vuelve a llenar en el próximo escaneo)
+    if "quotes" in tables and "trip" not in _columns(c, "quotes"):
+        c.execute("DROP TABLE quotes")
+    if "watches" in tables and "trip" not in _columns(c, "watches"):
+        c.execute("ALTER TABLE watches RENAME TO watches_v1")
+    for table, cols in {
+        "route_stats": {"trip": "TEXT NOT NULL DEFAULT 'ow'"},
+        "quote_history": {"trip": "TEXT NOT NULL DEFAULT 'ow'"},
+        "alerts": {"trip": "TEXT NOT NULL DEFAULT 'ow'", "airline": "TEXT"},
+    }.items():
+        if table in tables:
+            have = _columns(c, table)
+            for col, ddl in cols.items():
+                if col not in have:
+                    c.execute(f"ALTER TABLE {table} ADD COLUMN {col} {ddl}")
+    # índices antiguos sin trip
+    c.execute("DROP INDEX IF EXISTS idx_stats_route")
+    c.execute("DROP INDEX IF EXISTS idx_qh_route")
+    c.execute("DROP INDEX IF EXISTS idx_alerts_route")
+
+
+def _post_migrate(c):
+    tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    if "watches_v1" in tables:
+        c.execute("INSERT OR IGNORE INTO watches(origin, destination, trip, depart_date, return_date, target_price, "
+                  "last_price, created_at) SELECT origin, destination, 'ow', depart_date, '', target_price, "
+                  "last_price, created_at FROM watches_v1")
+        c.execute("DROP TABLE watches_v1")
+    # ajuste antiguo one_way -> trip_type
+    r = c.execute("SELECT value FROM settings WHERE key='one_way'").fetchone()
+    if r is not None:
+        try:
+            one_way = json.loads(r[0])
+        except ValueError:
+            one_way = True
+        c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('trip_type', ?)",
+                  (json.dumps("ow" if one_way else "rt"),))
+        c.execute("DELETE FROM settings WHERE key='one_way'")
+        c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('onboarded', 'true')")
+
+
 def init(path: str):
     global _db_path
     _db_path = path
-    d = os.path.dirname(os.path.abspath(path))
-    os.makedirs(d, exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
     with connect() as c:
+        _migrate(c)
         c.executescript(SCHEMA)
+        _post_migrate(c)
         existing = {r["key"] for r in c.execute("SELECT key FROM settings")}
         for k, v in DEFAULT_SETTINGS.items():
             if k in existing:
                 continue
             env = os.environ.get(ENV_MAP.get(k, ""), "") if k in ENV_MAP else ""
             if env:
-                v = type(v)(env) if isinstance(v, int) and not isinstance(v, bool) else env
+                v = int(env) if isinstance(v, int) and not isinstance(v, bool) else env
             c.execute("INSERT INTO settings(key, value) VALUES (?, ?)", (k, json.dumps(v)))
-        # Si ORIGINS viene por entorno la primera vez
         if "origins" not in existing and os.environ.get("ORIGINS"):
             origins = [o.strip().upper() for o in os.environ["ORIGINS"].split(",") if o.strip()]
             c.execute("UPDATE settings SET value=? WHERE key='origins'", (json.dumps(origins),))
+        if not c.execute("SELECT 1 FROM settings WHERE key='_secret_key'").fetchone():
+            c.execute("INSERT INTO settings(key, value) VALUES('_secret_key', ?)", (json.dumps(secrets.token_hex(32)),))
 
 
 @contextmanager
@@ -213,10 +287,15 @@ def execute(sql, params=()):
         return cur.lastrowid
 
 
+def secret_key() -> str:
+    r = one("SELECT value FROM settings WHERE key='_secret_key'")
+    return json.loads(r["value"]) if r else "dev"
+
+
 # ---------------- Ajustes ----------------
 def get_settings() -> dict:
     s = dict(DEFAULT_SETTINGS)
-    for r in rows("SELECT key, value FROM settings"):
+    for r in rows("SELECT key, value FROM settings WHERE key NOT LIKE '\\_%' ESCAPE '\\'"):
         try:
             s[r["key"]] = json.loads(r["value"])
         except (TypeError, ValueError):
@@ -230,37 +309,43 @@ def update_settings(values: dict) -> dict:
         for k, v in values.items():
             if k not in DEFAULT_SETTINGS:
                 continue
-            # Si el cliente devuelve el secreto enmascarado, no lo sobrescribimos
             if k in SECRET_KEYS and isinstance(v, str) and v.startswith("••••"):
-                continue
+                continue  # el cliente devuelve el secreto enmascarado: no lo pisamos
             default = DEFAULT_SETTINGS[k]
             try:
                 if isinstance(default, bool):
                     v = v if isinstance(v, bool) else str(v).lower() in ("1", "true", "yes", "on", "si", "sí")
                 elif isinstance(default, int):
-                    v = int(v)
+                    v = int(float(v))
                 elif isinstance(default, float):
                     v = float(v)
                 elif isinstance(default, list):
                     if isinstance(v, str):
                         v = [x.strip().upper() for x in v.split(",") if x.strip()]
-                    v = [str(x).strip().upper() for x in v if str(x).strip()]
+                    v = list(dict.fromkeys(str(x).strip().upper() for x in v if str(x).strip()))
                 else:
                     v = "" if v is None else str(v).strip()
             except (TypeError, ValueError):
                 v = current[k]
-            c.execute(
-                "INSERT INTO settings(key, value) VALUES(?, ?) "
-                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (k, json.dumps(v)),
-            )
-    return get_settings()
+            if k in CHOICES and v not in CHOICES[k]:
+                v = current[k]
+            c.execute("INSERT INTO settings(key, value) VALUES(?, ?) "
+                      "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (k, json.dumps(v)))
+    s = get_settings()
+    if s["min_nights"] > s["max_nights"]:
+        update_settings({"max_nights": s["min_nights"]})
+        s = get_settings()
+    return s
 
 
 def public_settings() -> dict:
-    """Ajustes para la interfaz, con los secretos enmascarados."""
     s = get_settings()
     for k in SECRET_KEYS:
         v = s.get(k) or ""
         s[k] = ("••••" + v[-4:]) if v else ""
     return s
+
+
+def trips(settings: dict):
+    t = settings.get("trip_type", "both")
+    return ["ow", "rt"] if t == "both" else [t]

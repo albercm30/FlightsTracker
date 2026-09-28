@@ -126,6 +126,31 @@ class ParsersTest(unittest.TestCase):
         self.assertEqual(l["aviasales"], "https://www.aviasales.com/search/MAD0311BKK1")
         self.assertIn("/mad/bkk/261103/", l["skyscanner"])
 
+    def test_rt_demo(self):
+        p = DemoProvider(now=datetime(2026, 10, 1, 12, tzinfo=timezone.utc))
+        ow = p.fetch_month("MAD", "NYC", "2027-02")
+        rt = p.fetch_month("MAD", "NYC", "2027-02", trip="rt", min_nights=5, max_nights=9)
+        self.assertTrue(all(q.trip == "rt" and 5 <= q.nights <= 9 for q in rt))
+        self.assertGreater(min(x.price for x in rt), min(x.price for x in ow))
+        self.assertLess(min(x.price for x in rt), min(x.price for x in ow) * 2.2)
+
+    def test_baggage(self):
+        from app import airlines
+        fr = airlines.baggage("FR", False, "cabin_checked", legs=2, pax=2)
+        self.assertEqual(fr["cabin"], "fee")
+        self.assertGreater(fr["fee_min"], 0)
+        self.assertEqual(airlines.baggage("QR", True, "checked")["fee_max"], 0)
+        self.assertEqual(airlines.baggage("IB", False, "cabin")["fee_max"], 0)
+        self.assertEqual(airlines.baggage("XX", False, "personal")["fee_est"], 0)
+
+    def test_holidays(self):
+        from app import holidays
+        items = holidays.upcoming("", today=date(2026, 11, 20))
+        dec = next(i for i in items if "Inmaculada" in i["title"])
+        self.assertEqual((dec["start"], dec["end"], dec["days_off"]), ("2026-12-05", "2026-12-08", 1))
+        ss = next(i for i in items if i["title"] == "Semana Santa")
+        self.assertEqual(ss["start"], "2027-03-25")
+
     def test_catalog(self):
         self.assertTrue(all(c["code"] in catalog.COORDS for c in catalog.CITIES))
         self.assertGreater(catalog.distance_km("MAD", "SYD"), 17000)
@@ -167,19 +192,76 @@ class ApiTest(unittest.TestCase):
         self.assertTrue(cal["quotes"])
         self.assertTrue(c.get("/api/history?origin=MAD&destination=LIS").json)  # incluye histórico demo
 
+        self.assertTrue(all(q["return_date"] for q in cal["quotes"]))  # por defecto: ida y vuelta
+        ow = c.get("/api/calendar?origin=MAD&destination=LIS&trip=ow").json
+        self.assertTrue(ow["quotes"] and not ow["quotes"][0]["return_date"])
         day = cal["quotes"][10]["depart_date"]
         self.assertEqual(c.post("/api/watches", json={"origin": "MAD", "destination": "LIS", "date": day}).status_code, 201)
         self.assertEqual(len(c.get("/api/watches").json), 1)
 
-        r = tracker.best_day_search(["MAD"], ["TYO", "OSA"])
+        r = tracker.search({"origins": ["MAD"], "destinations": ["TYO", "OSA"], "trip": "ow"})
         self.assertTrue(r["found"])
         self.assertEqual(r["best"]["price"], min(d["price"] for d in r["days"]))
+        rt = tracker.search({"origins": ["MAD"], "destinations": ["LIS"], "trip": "rt", "min_nights": 3,
+                             "max_nights": 5, "pax": 2, "baggage": "checked"})
+        self.assertTrue(rt["found"])
+        self.assertTrue(all(3 <= o["nights"] <= 5 for o in rt["top"]))
+        self.assertGreaterEqual(rt["best"]["price_total"], rt["best"]["price"] * 2)
+        self.assertTrue(rt["matrix"])
+        ex = tracker.search({"origins": ["MAD"], "destinations": catalog.explore_codes("EU", "playa"),
+                             "mode": "explore", "trip": "rt", "weekdays": [4], "return_weekdays": [6, 0]})
+        self.assertTrue(ex["found"])
+        self.assertTrue(all(d8.weekday() == 4 for d8 in (date.fromisoformat(o["depart_date"]) for o in ex["top"])))
+        g = c.get(f"/api/grid?origin=MAD&destination=LIS&depart={rt['best']['depart_date']}&return={rt['best']['return_date']}").json
+        self.assertTrue(g["cells"])
+        self.assertTrue(c.get("/api/holidays?region=canarias").json["items"])
         self.assertIn(r["advice"]["level"], ("buy", "good", "watch", "wait"))
 
         second = tracker.run_scan(notify=False)
         self.assertEqual(second["status"], "ok")
         self.assertEqual(c.get("/healthz").status_code, 200)
 
+
+
+class AuthAndMigrationTest(unittest.TestCase):
+    def test_login_required(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.environ["APP_PASSWORD"] = "secreta"
+            try:
+                app = create_app(os.path.join(tmp, "a.db"), start_scheduler=False)
+                c = app.test_client()
+                self.assertEqual(c.get("/api/status").status_code, 401)
+                self.assertEqual(c.get("/").status_code, 302)
+                self.assertEqual(c.get("/healthz").status_code, 200)
+                self.assertEqual(c.post("/api/login", json={"password": "mal"}).status_code, 401)
+                self.assertEqual(c.post("/api/login", json={"password": "secreta"}).status_code, 200)
+                self.assertEqual(c.get("/api/status").status_code, 200)
+            finally:
+                os.environ.pop("APP_PASSWORD", None)
+
+    def test_migration_from_v1(self):
+        import sqlite3
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "old.db")
+            con = sqlite3.connect(path)
+            con.executescript("""
+                CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+                INSERT INTO settings VALUES ('one_way', 'false');
+                CREATE TABLE quotes (origin TEXT, destination TEXT, depart_date TEXT, price REAL, first_seen TEXT,
+                                     updated_at TEXT, PRIMARY KEY (origin, destination, depart_date));
+                CREATE TABLE watches (id INTEGER PRIMARY KEY, origin TEXT, destination TEXT, depart_date TEXT,
+                                      target_price REAL, last_price REAL, created_at TEXT);
+                INSERT INTO watches VALUES (1, 'MAD', 'LON', '2030-01-01', NULL, 50, 'x');
+                CREATE TABLE alerts (id INTEGER PRIMARY KEY, created_at TEXT, kind TEXT, origin TEXT, destination TEXT,
+                                     depart_date TEXT, return_date TEXT, price REAL, ref_price REAL, message TEXT,
+                                     link TEXT, notified INTEGER DEFAULT 0, read INTEGER DEFAULT 0);
+            """)
+            con.commit()
+            con.close()
+            db.init(path)
+            self.assertEqual(db.get_settings()["trip_type"], "rt")
+            self.assertEqual(db.rows("SELECT trip FROM watches")[0]["trip"], "ow")
+            self.assertIn("trip", {r["name"] for r in db.rows("PRAGMA table_info(quotes)")})
 
 
 class NotifierTest(unittest.TestCase):

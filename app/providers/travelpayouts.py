@@ -1,11 +1,14 @@
 """Proveedor real: Aviasales Data API (Travelpayouts).
 
-- Registro gratuito en https://www.travelpayouts.com  -> Herramientas -> API -> token.
-- Devuelve precios encontrados por usuarios de Aviasales en las últimas horas/días
-  (datos en caché), ideal para vigilar el precio mínimo por día sin coste.
-- Endpoint usado: GET /aviasales/v3/prices_for_dates
+- Registro gratuito en https://www.travelpayouts.com -> token de API.
+- Devuelve precios encontrados por usuarios de Aviasales en los últimos días
+  (datos en caché): ideal para vigilar el mínimo por día sin coste.
+- Endpoint: GET /aviasales/v3/prices_for_dates
+    departure_at = YYYY-MM (todo el mes) o YYYY-MM-DD; omitido = cualquier fecha
+    one_way = true -> solo ida; false -> ida y vuelta (return_at en la respuesta)
 """
 import logging
+from datetime import date
 from typing import List
 
 import requests
@@ -33,32 +36,49 @@ class TravelpayoutsProvider(PriceProvider):
         self.timeout = timeout
         self.http = session or requests.Session()
 
-    def fetch_month(self, origin, destination, month, *, currency="eur", one_way=True, direct_only=False) -> List[Quote]:
-        params = {
+    def _get(self, params: dict):
+        resp = self.http.get(API_URL, params=params, headers={"X-Access-Token": self.token}, timeout=self.timeout)
+        if resp.status_code == 401:
+            raise TravelpayoutsError("Token de Travelpayouts no válido (401)")
+        if resp.status_code == 429:
+            raise TravelpayoutsError("Límite de peticiones alcanzado (429). Sube la pausa entre peticiones.")
+        resp.raise_for_status()
+        payload = resp.json()
+        if not payload.get("success", True):
+            raise TravelpayoutsError(str(payload.get("error") or payload))
+        return payload
+
+    def _params(self, origin, destination, currency, trip, direct_only):
+        return {
             "origin": origin,
             "destination": destination,
-            "departure_at": month,           # YYYY-MM -> todos los días del mes
-            "one_way": "true" if one_way else "false",
+            "one_way": "false" if trip == "rt" else "true",
             "direct": "true" if direct_only else "false",
             "currency": currency.lower(),
-            "market": self.market,           # por defecto la API usa "ru": pedimos datos del mercado español
+            "market": self.market,   # por defecto la API usa "ru": pedimos el mercado español
             "sorting": "price",
             "unique": "false",
             "limit": 1000,
             "page": 1,
         }
-        # Con one_way=false y sin return_at, la API devuelve ida y vuelta con cualquier fecha de regreso
-        resp = self.http.get(API_URL, params=params, headers={"X-Access-Token": self.token},
-                             timeout=self.timeout)
-        if resp.status_code == 401:
-            raise TravelpayoutsError("Token de Travelpayouts no válido (401)")
-        if resp.status_code == 429:
-            raise TravelpayoutsError("Límite de peticiones alcanzado (429). Sube 'request_delay_s'.")
-        resp.raise_for_status()
-        payload = resp.json()
-        if not payload.get("success", True):
-            raise TravelpayoutsError(str(payload.get("error") or payload))
-        return self.parse(payload, origin, destination)
+
+    def fetch_month(self, origin, destination, month, *, currency="eur", trip="ow", direct_only=False,
+                    min_nights=1, max_nights=30) -> List[Quote]:
+        params = self._params(origin, destination, currency, trip, direct_only)
+        params["departure_at"] = month
+        return self._filter(self.parse(self._get(params), origin, destination), trip, min_nights, max_nights)
+
+    def fetch_any(self, origin, destination, *, months=12, today: date = None, currency="eur", trip="ow",
+                  direct_only=False, min_nights=1, max_nights=30) -> List[Quote]:
+        # Una sola petición: lo más barato para cualquier fecha futura
+        params = self._params(origin, destination, currency, trip, direct_only)
+        return self._filter(self.parse(self._get(params), origin, destination), trip, min_nights, max_nights)
+
+    @staticmethod
+    def _filter(quotes, trip, min_nights, max_nights):
+        if trip != "rt":
+            return [q for q in quotes if not q.return_date]
+        return [q for q in quotes if q.return_date and min_nights <= (q.nights or 0) <= max_nights]
 
     def parse(self, payload, origin, destination) -> List[Quote]:
         out = []
@@ -80,7 +100,9 @@ class TravelpayoutsProvider(PriceProvider):
                 price=float(item["price"]),
                 airline=item.get("airline") or "",
                 transfers=item.get("transfers"),
+                return_transfers=item.get("return_transfers"),
                 link=link,
                 provider=self.name,
+                extra={"duration": item.get("duration"), "flight_number": item.get("flight_number")},
             ))
         return out

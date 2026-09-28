@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Entrar · Flight Tracker</title>
+  <meta name="theme-color" content="#3656f5">
+  <link rel="icon" type="image/png" href="/static/icons/icon-192.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <style>
+    body { min-height: 100vh; display: grid; place-items: center; background: var(--hero); padding: 16px; }
+    .box { width: 100%; max-width: 380px; background: var(--surface); border-radius: 22px; padding: 28px; box-shadow: var(--shadow-lg); display: grid; gap: 14px; }
+    .logo { padding: 0 0 6px; }
+    .err { color: var(--bad); font-size: .9rem; min-height: 1.2em; }
+  </style>
+</head>
+<body>
+  <form class="box" id="f">
+    <div class="logo"><span class="mark"><img src="/static/icons/icon-192.png" alt="" width="34" height="34" style="border-radius:10px"></span>Flight Tracker</div>
+    <h2>Entra en tu buscador</h2>
+    <label class="f">Contraseña<input type="password" id="pw" autocomplete="current-password" autofocus required></label>
+    <button class="btn primary block" type="submit">Entrar</button>
+    <div class="err" id="err"></div>
+  </form>
+  <script>
+    document.getElementById('f').onsubmit = async (e) => {
+      e.preventDefault();
+      const r = await fetch('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify({ password: document.getElementById('pw').value }) });
+      if (r.ok) location.href = '/'; else document.getElementById('err').textContent = (await r.json().catch(() => ({}))).error || 'Error';
+    };
+  </script>
+</body>
+</html>

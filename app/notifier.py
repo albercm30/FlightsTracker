@@ -12,7 +12,22 @@ from .providers import booking_links
 
 log = logging.getLogger(__name__)
 
-EMOJI = {"record": "🏆", "deal": "🔥", "target": "🎯", "drop": "📉"}
+EMOJI = {"record": "🏆", "deal": "🔥", "target": "🎯", "drop": "📉", "watch_down": "👀📉", "watch_up": "👀📈"}
+
+
+def in_quiet_hours(s: dict, now=None) -> bool:
+    """quiet_hours = "23-8" -> no se envían avisos entre las 23:00 y las 8:00 (hora local)."""
+    spec = (s.get("quiet_hours") or "").strip()
+    if not spec or "-" not in spec:
+        return False
+    try:
+        a, b = (int(x) for x in spec.split("-", 1))
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        h = (now or datetime.now(ZoneInfo(s.get("timezone") or "Europe/Madrid"))).hour
+    except Exception:  # noqa: BLE001 - zona horaria o formato inválidos: no silenciar
+        return False
+    return (a <= h < b) if a < b else (h >= a or h < b)
 
 
 def enabled_channels(s: dict):
@@ -27,7 +42,7 @@ def enabled_channels(s: dict):
 
 
 def _sorted(alerts):
-    prio = {"record": 4, "deal": 3, "target": 2, "drop": 1}
+    prio = {"watch_down": 5, "record": 4, "deal": 3, "target": 2, "drop": 1, "watch_up": 0}
     return sorted(alerts, key=lambda a: (-prio.get(a["kind"], 0), -(a.get("savings") or 0)))
 
 
@@ -81,6 +96,8 @@ def send_digest(alerts, settings=None) -> dict:
     channels = enabled_channels(s)
     if not alerts or not channels:
         return {}
+    if in_quiet_hours(s):
+        return {"skipped": "horas de silencio"}
     top = _sorted(alerts)[: int(s.get("notify_max_items", 10))]
     rest = len(alerts) - len(top)
     title = f"✈️ {len(alerts)} oferta(s) de vuelos"

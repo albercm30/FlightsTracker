@@ -43,10 +43,11 @@ SEASON = {
 BEACH = [0.60, 0.60, 0.72, 0.90, 1.00, 1.30, 1.60, 1.70, 1.15, 0.85, 0.62, 0.70]
 WINTER_SUN = [1.15, 1.10, 1.05, 1.00, 0.85, 0.88, 1.10, 1.20, 0.90, 1.00, 1.10, 1.28]
 DOW = [1.00, 0.90, 0.90, 1.02, 1.15, 0.97, 1.10]  # lun..dom
-AIRLINES_SHORT = ["VY", "FR", "IB", "UX", "U2", "V7", "I2", "W6"]
+AIRLINES_SHORT = ["VY", "FR", "IB", "UX", "U2", "V7", "I2", "W6", "FR", "VY"]
+CANARY_AIRLINES = ["NT", "VY", "FR", "UX", "IB", "I2"]
 AIRLINES_LONG = {"NA": ["IB", "UX", "DL", "AA", "UA"], "LA": ["IB", "UX", "AV", "LA", "AM", "CM"],
                  "AS": ["QR", "EK", "TK", "LH", "AF", "SQ"], "ME": ["EK", "QR", "TK", "EY"],
-                 "OC": ["QR", "EK", "SQ"], "AF": ["ET", "TK", "AF", "KL", "QR"], "EU": ["IB"]}
+                 "OC": ["QR", "EK", "SQ"], "AF": ["ET", "TK", "AF", "KL", "QR"], "EU": ["IB", "UX"]}
 CUR = {"eur": 1.0, "usd": 1.08, "gbp": 0.85}
 
 
@@ -138,16 +139,17 @@ class DemoProvider(PriceProvider):
         base *= 0.85 + 0.30 * _u("route", o, d)                # competencia/particularidades de la ruta
         return base
 
-    def _operates(self, dest: str, d: date, origin: str) -> bool:
+    def _operates(self, dest: str, d: date, origin: str, gaps: bool = True) -> bool:
         if dest in catalog.SUMMER_ONLY and d.month in (11, 12, 1, 2, 3):
             return _u("off", origin, dest, d) < 0.05
         if dest in catalog.WINTER_ONLY and d.month in (5, 6, 7, 8, 9):
             return _u("off", origin, dest, d) < 0.10
-        return _u("gap", origin, dest, d) > 0.04               # huecos puntuales sin datos
+        return not gaps or _u("gap", origin, dest, d) > 0.04     # huecos puntuales sin datos
 
-    def price_for(self, origin: str, dest: str, d: date, *, one_way=True, direct_only=False):
+    def price_for(self, origin: str, dest: str, d: date, *, direct_only=False, gaps=True):
+        """Precio de un trayecto de ida (origin -> dest) el día d, o None si no hay."""
         lead = (d - self.today).days
-        if lead < 1 or not self._operates(dest, d, origin):
+        if lead < 1 or not self._operates(dest, d, origin, gaps):
             return None
         info = catalog.info(dest)
         region = info.get("region", "EU")
@@ -193,27 +195,53 @@ class DemoProvider(PriceProvider):
                 p *= 0.93 if transfers == 1 else 0.88
         elif catalog.distance_km(origin, dest) > 2600 and _u("stops", origin, dest) < 0.4:
             transfers = 1
-        if not one_way:
-            p *= 1.75 if long_haul else 1.95
         airline = (_h("al", origin, dest, d) % 997)
-        pool = AIRLINES_LONG.get(region, ["IB"]) if long_haul else AIRLINES_SHORT
+        canary = {"LPA", "TCI", "ACE", "FUE"}
+        oi = catalog.info(origin)
+        if not long_haul and (origin in canary or dest in canary) and oi.get("country_code") == info.get("country_code") == "ES":
+            pool = CANARY_AIRLINES
+        elif long_haul:
+            pool = AIRLINES_LONG.get(region if region != "EU" else oi.get("region", "EU"), ["IB", "UX"])
+        else:
+            pool = AIRLINES_SHORT
         return fare_ladder(p), pool[airline % len(pool)], transfers
 
-    def fetch_month(self, origin, destination, month, *, currency="eur", one_way=True, direct_only=False) -> List[Quote]:
+    def fetch_month(self, origin, destination, month, *, currency="eur", trip="ow", direct_only=False,
+                    min_nights=1, max_nights=30) -> List[Quote]:
+        o, t = origin.upper(), destination.upper()
         y, m = map(int, month.split("-"))
         fx = CUR.get(currency.lower(), 1.0)
-        out = []
-        for day in range(1, monthrange(y, m)[1] + 1):
-            d = date(y, m, day)
-            res = self.price_for(origin.upper(), destination.upper(), d, one_way=one_way, direct_only=direct_only)
-            if not res:
+        days = [date(y, m, dd) for dd in range(1, monthrange(y, m)[1] + 1)]
+        out_legs = {d: self.price_for(o, t, d, direct_only=direct_only) for d in days}
+        if trip != "rt":
+            res = []
+            for d, leg in out_legs.items():
+                if not leg:
+                    continue
+                price, airline, transfers = leg
+                res.append(Quote(origin=o, destination=t, depart_date=d.isoformat(), price=round(price * fx),
+                                 airline=airline, transfers=transfers,
+                                 link=booking_links(o, t, d.isoformat())["aviasales"], provider=self.name))
+            return res
+        # Ida y vuelta: combina la ida con cada vuelta posible dentro del rango de noches
+        long_haul = catalog.is_long_haul(o, t)
+        rt_factor = 0.90 if long_haul else 0.98
+        back_cache = {}
+        res = []
+        for d, leg in out_legs.items():
+            if not leg:
                 continue
-            price, airline, transfers = res
-            ret = None
-            if not one_way:
-                ret = (d + timedelta(days=6 + _h("ret", origin, destination, d) % 9)).isoformat()
-            out.append(Quote(origin=origin.upper(), destination=destination.upper(), depart_date=d.isoformat(),
-                             return_date=ret, price=round(price * fx), airline=airline, transfers=transfers,
-                             link=booking_links(origin, destination, d.isoformat(), ret)["aviasales"],
-                             provider=self.name))
-        return out
+            for n in range(max(1, min_nights), max(min_nights, max_nights) + 1):
+                r = d + timedelta(days=n)
+                if r not in back_cache:
+                    back_cache[r] = self.price_for(t, o, r, direct_only=direct_only, gaps=False)
+                back = back_cache[r]
+                if not back:
+                    continue
+                price = fare_ladder((leg[0] + back[0]) * rt_factor)
+                res.append(Quote(origin=o, destination=t, depart_date=d.isoformat(), return_date=r.isoformat(),
+                                 price=round(price * fx), airline=leg[1], transfers=leg[2],
+                                 return_transfers=back[2],
+                                 link=booking_links(o, t, d.isoformat(), r.isoformat())["aviasales"],
+                                 provider=self.name))
+        return res

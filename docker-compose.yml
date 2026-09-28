@@ -1,3 +1,5 @@
+# Uso local o en tu servidor:      docker compose up -d --build
+# Con HTTPS y tu dominio (Caddy):  DOMAIN=vuelos.midominio.com docker compose --profile https up -d --build
 services:
   flight-tracker:
     build: .
@@ -9,6 +11,24 @@ services:
       - .env
     environment:
       - DB_PATH=/data/flights.db
-      - TZ=Atlantic/Canary
+      - TZ=${TZ:-Europe/Madrid}
     volumes:
       - ./data:/data
+
+  caddy:
+    image: caddy:2
+    profiles: ["https"]
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - flight-tracker
+
+volumes:
+  caddy_data:

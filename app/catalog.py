@@ -301,3 +301,35 @@ def is_long_haul(a: str, b: str) -> bool:
 
 def google_airports(code: str) -> str:
     return GOOGLE_AIRPORTS.get(code.upper(), code.upper())
+
+
+# ---------------------------------------------------------------------------
+# Temáticas para «Explorar»
+THEMES = {
+    "playa": {"label": "Playa", "icon": "🏖️", "codes": [
+        "PMI", "IBZ", "MAH", "LPA", "TCI", "ACE", "FUE", "FAO", "FNC", "JTR", "JMK", "HER", "DBV", "SPU", "MLA",
+        "AYT", "LCA", "PMO", "NAP", "HRG", "SID", "ZNZ", "MRU", "CUN", "PUJ", "HAV", "SJU", "CTG", "MIA", "HNL",
+        "HKT", "DPS", "MLE", "CMB", "PPT", "RIO", "TLV", "DXB"]},
+    "ciudad": {"label": "Escapada urbana", "icon": "🏙️", "codes": [
+        "LON", "PAR", "ROM", "MIL", "VCE", "FLR", "LIS", "OPO", "BER", "MUC", "AMS", "BRU", "VIE", "PRG", "BUD",
+        "WAW", "KRK", "CPH", "STO", "DUB", "EDI", "IST", "ATH", "MAD", "BCN", "SVQ", "VLC", "BIO", "RIX", "TLL",
+        "NYC", "CHI", "BOS", "MEX", "BUE", "TYO", "SEL", "HKG", "SIN", "BKK", "DXB"]},
+    "naturaleza": {"label": "Naturaleza y aventura", "icon": "🏔️", "codes": [
+        "REK", "TOS", "OSL", "RVN", "FNC", "PDL", "GVA", "ZRH", "EDI", "NBO", "CPT", "KTM", "CUZ", "SJO", "UIO",
+        "YVR", "AKL", "SCL", "MRU", "ZNZ", "TNG", "RAK"]},
+    "aurora": {"label": "Nieve y auroras", "icon": "❄️", "codes": ["REK", "TOS", "RVN", "OSL", "HEL", "STO", "ZRH", "GVA", "MUC", "YMQ", "YVR"]},
+    "exotico": {"label": "Lejos y exótico", "icon": "🌴", "codes": [
+        "BKK", "HKT", "DPS", "SGN", "HAN", "MNL", "KUL", "SIN", "TYO", "OSA", "SEL", "MLE", "CMB", "KTM", "DEL",
+        "ZNZ", "MRU", "CPT", "PPT", "SYD", "AKL", "CUZ", "HAV", "CUN"]},
+    "barato": {"label": "Low cost cerca", "icon": "💸", "codes": sorted(LOWCOST_HOT)},
+}
+
+
+def explore_codes(region: str = "", theme: str = "", exclude=()):
+    codes = [c["code"] for c in CITIES]
+    if theme and theme in THEMES:
+        codes = [c for c in THEMES[theme]["codes"] if c in BY_CODE]
+    if region:
+        codes = [c for c in codes if BY_CODE[c]["region"] == region]
+    ex = {e.upper() for e in exclude}
+    return [c for c in dict.fromkeys(codes) if c not in ex]

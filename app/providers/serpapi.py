@@ -19,7 +19,10 @@ class SerpApiError(RuntimeError):
 
 
 def live_check(api_key: str, origin: str, destination: str, depart_date: str, return_date: str = None,
-               currency: str = "EUR", session=None, timeout: int = 60) -> dict:
+               currency: str = "EUR", session=None, timeout: int = 60, adults: int = 1, travel_class: int = 1,
+               cabin_bags: int = 0, nonstop: bool = False) -> dict:
+    """travel_class: 1 turista, 2 turista superior, 3 business, 4 primera.
+    cabin_bags: nº de maletas de cabina que Google debe incluir en el precio."""
     if not api_key:
         raise SerpApiError("Falta la clave de SerpApi (Ajustes)")
     params = {
@@ -35,6 +38,14 @@ def live_check(api_key: str, origin: str, destination: str, depart_date: str, re
     }
     if return_date:
         params["return_date"] = return_date
+    if adults and int(adults) > 1:
+        params["adults"] = int(adults)
+    if travel_class and int(travel_class) > 1:
+        params["travel_class"] = int(travel_class)
+    if cabin_bags:
+        params["bags"] = int(cabin_bags)
+    if nonstop:
+        params["stops"] = 1          # 1 = solo directos
     http = session or requests
     r = http.get(API_URL, params=params, timeout=timeout)
     if r.status_code == 401:
@@ -62,6 +73,10 @@ def parse(data: dict) -> dict:
                 "from": (legs[0].get("departure_airport") or {}).get("id"),
                 "to": (legs[-1].get("arrival_airport") or {}).get("id"),
                 "best": group == "best_flights",
+                "extensions": sorted({e for leg in legs for e in (leg.get("extensions") or [])
+                                      if any(k in e.lower() for k in ("bag", "equipaje", "maleta", "legroom", "wi-fi",
+                                                                      "espacio", "power", "enchufe"))}),
+                "flight_numbers": [leg.get("flight_number") for leg in legs if leg.get("flight_number")],
             })
     flights.sort(key=lambda x: x["price"])
     pi = data.get("price_insights") or {}

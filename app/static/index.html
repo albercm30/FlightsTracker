@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Flight Tracker</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">✈</span> Flight Tracker</div>
+    <div class="status" id="status">Cargando…</div>
+    <button class="btn primary" id="scanBtn">Escanear ahora</button>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button data-tab="dashboard" class="active">Panel</button>
+    <button data-tab="search">Mejor día</button>
+    <button data-tab="calendar">Calendario</button>
+    <button data-tab="watches">Vigilados</button>
+    <button data-tab="destinations">Destinos</button>
+    <button data-tab="alerts">Alertas <span class="badge" id="alertBadge" hidden></span></button>
+    <button data-tab="settings">Ajustes</button>
+  </nav>
+
+  <main>
+    <!-- PANEL -->
+    <section id="tab-dashboard" class="tab active">
+      <div class="progress" id="scanProgress" hidden><div class="bar"></div><span></span></div>
+      <div class="kpis" id="kpis"></div>
+      <div class="notice" id="demoNotice" hidden>
+        Estás en <b>modo demo</b>: los precios son simulados con un modelo realista, pero no son reales.
+        Añade tu token gratuito de Travelpayouts en <a href="#" data-goto="settings">Ajustes</a> para usar precios reales.
+      </div>
+      <div class="empty" id="emptyDest" hidden>
+        <h3>Empieza añadiendo tus destinos favoritos</h3>
+        <p>Ve a <a href="#" data-goto="destinations">Destinos</a> y añade ciudades o países enteros. Luego pulsa «Escanear ahora».</p>
+      </div>
+      <h2>Mejores ofertas ahora</h2>
+      <p class="muted">El precio más barato de cada destino favorito (entre tus orígenes), comparado con su precio habitual del año.</p>
+      <div class="cards" id="deals"></div>
+      <div class="two-col">
+        <div>
+          <h2>Cambios de precio recientes</h2>
+          <div id="changes" class="list"></div>
+        </div>
+        <div>
+          <h2>Últimas alertas</h2>
+          <div id="lastAlerts" class="list"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- MEJOR DÍA -->
+    <section id="tab-search" class="tab">
+      <h2>¿Qué día puedo volar más barato?</h2>
+      <p class="muted">Elige de dónde sales y a dónde quieres ir (una ciudad o un país entero). Buscamos el día más barato de todo el año.</p>
+      <form id="searchForm" class="panel form-grid">
+        <label>Origen
+          <select id="sOrigin"></select>
+        </label>
+        <label>Destino (ciudad, código o país)
+          <input id="sDest" list="catalogList" placeholder="p. ej. Bangkok, NYC, Japón…" required autocomplete="off">
+        </label>
+        <label>Desde <input type="date" id="sFrom"></label>
+        <label>Hasta <input type="date" id="sTo"></label>
+        <div class="form-actions"><button class="btn primary" type="submit">Buscar el mejor día</button></div>
+      </form>
+      <div class="progress" id="searchProgress" hidden><div class="bar"></div><span></span></div>
+      <div id="searchResult"></div>
+    </section>
+
+    <!-- CALENDARIO -->
+    <section id="tab-calendar" class="tab">
+      <h2>Calendario de precios</h2>
+      <div class="panel inline-form">
+        <label>Origen <select id="cOrigin"></select></label>
+        <label>Destino <select id="cDest"></select></label>
+        <div class="legend"><span class="sw cheap"></span>barato <span class="sw mid"></span>normal <span class="sw exp"></span>caro</div>
+      </div>
+      <div id="calSummary"></div>
+      <div class="months" id="calendarGrid"></div>
+      <h3>Evolución del precio mínimo de la ruta</h3>
+      <div id="routeHistory" class="chart"></div>
+    </section>
+
+    <!-- VIGILADOS -->
+    <section id="tab-watches" class="tab">
+      <h2>Vuelos vigilados</h2>
+      <p class="muted">Fechas concretas que sigues. Te avisamos si el precio sube o baja (según el % de Ajustes) o si baja de tu precio objetivo. Añádelos desde el calendario o desde «Mejor día».</p>
+      <div id="watchList"></div>
+    </section>
+
+    <!-- DESTINOS -->
+    <section id="tab-destinations" class="tab">
+      <h2>Destinos favoritos</h2>
+      <div class="panel inline-form">
+        <label>Ciudad o código IATA
+          <input id="destInput" list="catalogList" placeholder="Busca: Tokio, Roma, CUN…" autocomplete="off">
+        </label>
+        <label>Precio máximo (opcional)
+          <input id="destMax" type="number" min="0" placeholder="€">
+        </label>
+        <button class="btn primary" id="addDest">Añadir</button>
+        <span class="sep">o</span>
+        <label>País entero <select id="countrySel"></select></label>
+        <button class="btn" id="addCountry">Añadir país</button>
+      </div>
+      <div id="destList"></div>
+    </section>
+
+    <!-- ALERTAS -->
+    <section id="tab-alerts" class="tab">
+      <div class="row-between">
+        <h2>Alertas</h2>
+        <div>
+          <button class="btn" id="markRead">Marcar como leídas</button>
+          <button class="btn danger" id="clearAlerts">Borrar todas</button>
+        </div>
+      </div>
+      <div id="alertList" class="list"></div>
+    </section>
+
+    <!-- AJUSTES -->
+    <section id="tab-settings" class="tab">
+      <h2>Ajustes</h2>
+      <form id="settingsForm">
+        <div class="panel">
+          <h3>Origen</h3>
+          <p class="muted">Aeropuertos desde los que puedes salir. Usa códigos de ciudad IATA (MAD, BCN, TCI = Tenerife, LPA…).</p>
+          <div class="chips" id="originChips"></div>
+          <div class="inline-form">
+            <input id="originInput" list="catalogList" placeholder="Añadir origen…" autocomplete="off">
+            <button type="button" class="btn" id="addOrigin">Añadir</button>
+            <button type="button" class="btn" id="spainOrigins">Toda España</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Fuente de precios</h3>
+          <div class="form-grid">
+            <label>Proveedor
+              <select name="provider">
+                <option value="auto">Automático (real si hay token, si no demo)</option>
+                <option value="travelpayouts">Travelpayouts / Aviasales (real)</option>
+                <option value="demo">Demo (simulado realista)</option>
+              </select>
+            </label>
+            <label>Token de Travelpayouts <input name="travelpayouts_token" autocomplete="off" placeholder="gratis en travelpayouts.com"></label>
+            <label>Marker de afiliado (opcional) <input name="travelpayouts_marker" autocomplete="off"></label>
+            <label>Clave SerpApi (Google Flights, opcional) <input name="serpapi_key" autocomplete="off" placeholder="precio en vivo + histórico"></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Qué buscar</h3>
+          <div class="form-grid">
+            <label>Tipo de viaje
+              <select name="one_way"><option value="true">Solo ida</option><option value="false">Ida y vuelta</option></select>
+            </label>
+            <label>Solo vuelos directos
+              <select name="direct_only"><option value="false">No</option><option value="true">Sí</option></select>
+            </label>
+            <label>Meses a vigilar <input name="months_ahead" type="number" min="1" max="13"></label>
+            <label>Moneda
+              <select name="currency"><option value="eur">EUR</option><option value="usd">USD</option><option value="gbp">GBP</option></select>
+            </label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Cuándo avisarme</h3>
+          <div class="form-grid">
+            <label>Avisar con al menos (días de antelación) <input name="min_days_ahead" type="number" min="0"></label>
+            <label>Y como máximo (días) <input name="max_days_ahead" type="number" min="1"></label>
+            <label>Chollo si está X % por debajo de lo habitual <input name="deal_pct" type="number" min="1" max="90"></label>
+            <label>Bajada de precio mínima (%) <input name="drop_pct" type="number" min="1" max="90"></label>
+            <label>Repetir aviso solo si baja otro (%) <input name="realert_pct" type="number" min="0" max="90"></label>
+            <label>Máx. alertas por ruta y escaneo <input name="max_alerts_per_route" type="number" min="1" max="20"></label>
+            <label>Vuelos vigilados: avisar si cambia (%) <input name="watch_change_pct" type="number" min="1" max="90"></label>
+            <label>Máx. ofertas por mensaje <input name="notify_max_items" type="number" min="1" max="50"></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Escaneo automático</h3>
+          <div class="form-grid">
+            <label>Cada (horas) <input name="scan_interval_hours" type="number" min="1" max="168"></label>
+            <label>Pausa entre peticiones (s) <input name="request_delay_s" type="number" step="0.1" min="0"></label>
+            <label>Buscador: reutilizar precios de hace menos de (h) <input name="search_cache_hours" type="number" step="0.5" min="0"></label>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Notificaciones</h3>
+          <p class="muted">Configura uno o varios canales. Consulta el README para crear el bot de Telegram en 2 minutos.</p>
+          <div class="form-grid">
+            <label>Telegram: token del bot <input name="telegram_bot_token" autocomplete="off"></label>
+            <label>Telegram: chat id <input name="telegram_chat_id" autocomplete="off"></label>
+            <label>ntfy: servidor <input name="ntfy_server"></label>
+            <label>ntfy: tema (topic) <input name="ntfy_topic" placeholder="p. ej. vuelos-alber-83k2"></label>
+            <label>Email: servidor SMTP <input name="smtp_host" placeholder="smtp.gmail.com"></label>
+            <label>Email: puerto <input name="smtp_port" type="number"></label>
+            <label>Email: usuario <input name="smtp_user" autocomplete="off"></label>
+            <label>Email: contraseña <input name="smtp_password" type="password" autocomplete="new-password"></label>
+            <label>Email: remitente <input name="smtp_from"></label>
+            <label>Email: enviar a <input name="email_to"></label>
+          </div>
+          <button type="button" class="btn" id="testNotif">Enviar aviso de prueba</button>
+          <span id="testResult" class="muted"></span>
+        </div>
+        <div class="sticky-save"><button class="btn primary" type="submit">Guardar ajustes</button> <span id="saveMsg" class="muted"></span></div>
+      </form>
+    </section>
+  </main>
+
+  <!-- Detalle de un día -->
+  <div class="modal" id="modal" hidden>
+    <div class="modal-card">
+      <button class="close" id="modalClose" aria-label="Cerrar">×</button>
+      <div id="modalBody"></div>
+    </div>
+  </div>
+
+  <datalist id="catalogList"></datalist>
+  <div class="toast" id="toast" hidden></div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

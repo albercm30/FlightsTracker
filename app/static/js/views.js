@@ -136,8 +136,8 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
   const lenHint = () => {
     const h = $('[data-lenhint]', form); if (!h || !dest) return;
     const r = resolvePlace(dest.value), code = r.destinations ? r.destinations[0] : null;
-    const spec = code ? destLength(code) : r.country ? (S.settings.trip_lengths || {})[r.country] : null;
-    h.textContent = spec && !form._nightsDirty ? `Usando ${spec === 'weekend' ? 'fin de semana (vie–dom)' : `${spec} días`} (Mis destinos)` : '';
+    const spec = code ? destLength(code) : r.country ? parseLength((S.settings.trip_lengths || {})[r.country]) : null;
+    h.textContent = spec && !form._nightsDirty ? `Usando ${lengthText(spec)} (Mis destinos)` : '';
   };
   dest?.addEventListener('change', lenHint);
   $('[data-wd]', form)?.addEventListener('click', (e) => { const b = e.target.closest('[data-d]'); if (b) b.classList.toggle('on'); });

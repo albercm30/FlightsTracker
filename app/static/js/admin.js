@@ -61,11 +61,11 @@ async function destinationsView(el) {
   const published = new Set((await api('/api/destinations')).map((d) => d.code));
   const w = await workingConfig();
   let list = [...w.cfg.destinations];
-  let lengths = { ...(w.cfg.trip_lengths || {}) }, stopsBy = { ...(w.cfg.dest_stops || {}) };
+  let lengths = Object.fromEntries(Object.entries(w.cfg.trip_lengths || {}).map(([k, v]) => [k, normLen(v)]).filter(([, v]) => v)), stopsBy = { ...(w.cfg.dest_stops || {}) };
   const keep = () => saveDraft({ cfg: { ...w.cfg, destinations: list, trip_lengths: lengths, dest_stops: stopsBy } });
   const draw = () => {
-    const changed = !sameCfg(list, w.cur.destinations) || !sameCfg(lengths, w.cur.trip_lengths || {}) || !sameCfg(stopsBy, w.cur.dest_stops || {});
-    el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los vigilamos cada día y a las 8:00 te llega un email con sus mejores ofertas. Elige para cada país cuántos días quieres viajar y si solo quieres vuelos directos.</p></div></div>
+    const changed = !sameCfg(list, w.cur.destinations) || !sameCfg(lengths, Object.fromEntries(Object.entries(w.cur.trip_lengths || {}).map(([k, v]) => [k, normLen(v)]).filter(([, v]) => v))) || !sameCfg(stopsBy, w.cur.dest_stops || {});
+    el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los vigilamos cada día y a las 8:00 te llega un email con sus mejores ofertas. Elige para cada país cuántas noches quieres viajar (fijo o un rango) y si solo quieres vuelos directos.</p></div></div>
       ${pendingBanner(w.draft)}
       <div class="card pad"><div class="row">
         <div style="flex:1;min-width:220px"><input id="sdIn" placeholder="Ciudad, código o país entero…"></div>
@@ -91,8 +91,19 @@ async function destinationsView(el) {
     el.onchange = (e) => {
       const st = e.target.closest('[data-stops-cc]');
       if (st) { if (st.value === '') delete stopsBy[st.dataset.stopsCc]; else stopsBy[st.dataset.stopsCc] = +st.value; keep(); draw(); return; }
+      const nm = e.target.closest('[data-nmin],[data-nmax]');
+      if (nm) {
+        const cc = nm.dataset.nmin || nm.dataset.nmax, row = nm.closest('.dg-nights');
+        let a = Math.max(1, Math.min(60, +row.querySelector('[data-nmin]').value || 1)), b = Math.max(1, Math.min(60, +row.querySelector('[data-nmax]').value || a));
+        if (b < a) [a, b] = [b, a];
+        lengths[cc] = `${a}-${b}`; keep();
+        const sv = $('#sdSave'); if (sv) { sv.disabled = false; sv.classList.add('primary'); }   // sin redibujar: no pierdes el foco
+        return;
+      }
       const t = e.target.closest('[data-len]'); if (!t) return;
-      if (t.value) lengths[t.dataset.len] = t.value === 'weekend' ? 'weekend' : +t.value; else delete lengths[t.dataset.len];
+      const cc = t.dataset.len;
+      if (t.value === 'custom') { const g = [S.settings.min_nights || 3, S.settings.max_nights || 10]; lengths[cc] = `${g[0]}-${g[1]}`; }
+      else if (t.value) lengths[cc] = t.value; else delete lengths[cc];
       keep(); draw();
     };
     $('#sdSave').onclick = () => { Object.assign(w.cfg, { destinations: list, trip_lengths: lengths, dest_stops: stopsBy }); sendConfig(w.cfg); w.draft = loadDraft(); draw(); };
@@ -100,7 +111,9 @@ async function destinationsView(el) {
   draw();
 }
 /* Destinos agrupados por país, con la duración del viaje de cada país */
-const LEN_OPTS = [['', 'Días: general'], ['weekend', 'Finde (vie–dom)'], ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 25, 30].map((n) => [String(n), `${n} días`])];
+const LEN_OPTS = [['', 'Noches: general'], ['weekend', 'Finde (vie–dom)'], ['custom', 'Noches…']];
+/* valor guardado → 'weekend' | 'a-b' (noches). Lo antiguo en días se convierte. */
+function normLen(v) { const p = parseLength(v); return p === 'weekend' ? 'weekend' : p ? `${p[0]}-${p[1]}` : ''; }
 function lenLabel(v) { return v === 'weekend' ? 'fin de semana' : v ? `${v} días` : ''; }
 const STOP_OPTS = [['', 'Escalas: general'], ['0', '✈ Directos'], ['1', 'Máx. 1 escala'], ['-1', 'Cualquiera']];
 function destGroups(list, published, lengths, stopsBy = {}) {
@@ -109,10 +122,12 @@ function destGroups(list, published, lengths, stopsBy = {}) {
   list.forEach((c) => { const cc = cityInfo(c).country_code || '??'; (groups[cc] = groups[cc] || []).push(c); });
   const cname = (cc) => (S.countries.find((x) => x.country_code === cc) || {}).country || cityInfo(groups[cc][0]).country || cc;
   return Object.keys(groups).sort((a, b) => cname(a).localeCompare(cname(b))).map((cc) => {
-    const v = lengths[cc] ?? '', sv = stopsBy[cc] ?? '';
+    const v = normLen(lengths[cc] ?? ''), sv = stopsBy[cc] ?? '';
+    const custom = /^\d+-\d+$/.test(v), [lo, hi] = custom ? v.split('-') : ['', ''];
     return `<div class="dgroup"><div class="dg-head">${flag(cc)}<b>${esc(cname(cc))}</b></div>
-      <div class="dg-opts"><select data-len="${cc}" title="Duración del viaje a ${esc(cname(cc))}">${LEN_OPTS.map(([k, l]) => `<option value="${k}" ${String(v) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <div class="dg-opts"><select data-len="${cc}" title="Duración del viaje a ${esc(cname(cc))}">${LEN_OPTS.map(([k, l]) => `<option value="${k}" ${(custom ? 'custom' : v) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
       <select data-stops-cc="${cc}" title="Escalas para ${esc(cname(cc))}" class="${sv === 0 ? 'direct' : ''}">${STOP_OPTS.map(([k, l]) => `<option value="${k}" ${String(sv) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+      ${custom ? `<div class="dg-nights"><span class="small muted">Entre</span><input type="number" min="1" max="60" value="${lo}" data-nmin="${cc}"><span class="small muted">y</span><input type="number" min="1" max="60" value="${hi}" data-nmax="${cc}"><span class="small muted">noches</span></div>` : ''}
       <div class="chips dest-chips">${groups[cc].map((c) => `<span class="chip">${esc(cityName(c))} <span class="tiny muted">${c}</span>${published.has(c) ? '' : ' <span class="pill warn" title="Tendrá precios tras guardar">nuevo</span>'}<button class="x" data-rm="${c}" title="Quitar">×</button></span>`).join('')}</div></div>`;
   }).join('');
 }

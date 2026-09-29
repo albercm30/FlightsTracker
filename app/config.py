@@ -51,6 +51,7 @@ def clean(cfg: dict) -> dict:
             if k == "exclude_airlines":
                 v = [str(x).strip().upper()[:3] for x in (v.split(",") if isinstance(v, str) else v or []) if str(x).strip()]
             elif k == "trip_lengths":
+                # "weekend" | "a-b" (rango de noches) | nº entero (días, formato antiguo)
                 tl = {}
                 for kk, vv in (v or {}).items() if isinstance(v, dict) else []:
                     kk = str(kk).strip().upper()
@@ -58,13 +59,20 @@ def clean(cfg: dict) -> dict:
                         continue
                     if vv == "weekend":
                         tl[kk] = "weekend"
-                    else:
-                        try:
-                            n = int(vv)
-                        except (TypeError, ValueError):
-                            continue
-                        if 2 <= n <= 60:
-                            tl[kk] = n
+                        continue
+                    m = re.match(r"^\s*(\d{1,2})\s*(?:-\s*(\d{1,2}))?\s*$", str(vv)) if isinstance(vv, str) else None
+                    if m:
+                        lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+                        lo, hi = min(lo, hi), max(lo, hi)
+                        if 1 <= lo and hi <= 60:
+                            tl[kk] = f"{lo}-{hi}"
+                        continue
+                    try:
+                        n = int(vv)
+                    except (TypeError, ValueError):
+                        continue
+                    if 2 <= n <= 60:
+                        tl[kk] = f"{n - 1}-{n - 1}"
                 v = tl
             elif k == "dest_stops":
                 ds = {}

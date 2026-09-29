@@ -301,11 +301,11 @@ class ConfigAndDailyTest(TmpDB):
     def test_issue_to_config_and_apply(self):
         from app import config
         body = ("Pulsa Create\n\n```json\n" + json.dumps({"origins": ["tci"], "destinations": ["VIE", "ZRH", "x1", "CPT"],
-                "trip_lengths": {"AT": "3", "CH": "weekend", "ZA": 10, "b@d": 5, "FR": 99}, "max_stops": 1,
+                "trip_lengths": {"AT": 3, "CH": "weekend", "ZA": 10, "AR": "15-10", "b@d": 5, "FR": 99}, "max_stops": 1,
                 "hack": "rm -rf", "_resumen": True}, indent=1) + "\n```")
         cfg = config.from_issue({"issue": {"body": body}})
         self.assertEqual(cfg["destinations"], ["VIE", "ZRH", "CPT"])
-        self.assertEqual(cfg["trip_lengths"], {"AT": 3, "CH": "weekend", "ZA": 10})
+        self.assertEqual(cfg["trip_lengths"], {"AT": "2-2", "CH": "weekend", "ZA": "9-9", "AR": "10-15"})   # días antiguos -> noches
         self.assertNotIn("hack", cfg)
         path = os.path.join(self.tmp.name, "config.json")
         config.save(cfg, path)
@@ -319,8 +319,8 @@ class ConfigAndDailyTest(TmpDB):
     def test_trip_lengths_weekends_and_daily(self):
         from app import daily
         db.update_settings({"origins": ["TCI"], "provider": "demo", "months_ahead": 3, "trip_type": "rt",
-                            "trip_lengths": {"AT": 3, "CH": "weekend", "ZA": 10}})
-        for c in ("VIE", "ZRH", "CPT", "LON"):
+                            "trip_lengths": {"AT": 3, "CH": "weekend", "ZA": 10, "AR": "10-15"}})
+        for c in ("VIE", "ZRH", "CPT", "LON", "BUE"):
             db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES (?,?,1,'x')", (c, c))
         self.assertEqual(tracker.run_scan(notify=False)["status"], "ok")
         nights = lambda c, t="rt": {r["nights"] for r in db.rows("SELECT nights FROM quotes WHERE destination=? AND trip=?", (c, t))}
@@ -331,11 +331,14 @@ class ConfigAndDailyTest(TmpDB):
               for r in db.rows("SELECT depart_date, return_date FROM quotes WHERE destination='ZRH' AND trip='rt'")}
         self.assertEqual(wd, {(4, 6)})
         self.assertGreater(len(nights("LON")), 2)     # sin duración: la general (3–10 noches)
+        self.assertTrue(nights("BUE") and nights("BUE") <= set(range(10, 16)))   # Argentina: entre 10 y 15 noches
+        self.assertGreater(len(nights("BUE")), 2)
         self.assertEqual(nights("LON", "we"), {2})    # + fines de semana vie→dom para la búsqueda
         data = daily.collect()
         md = daily.markdown(data, mention="albercm30")
         self.assertTrue(md.startswith("@albercm30"))
-        self.assertIn("3 días", md)
+        self.assertIn("2 noches", md)
+        self.assertIn("10–15 noches", md)
         self.assertIn("fin de semana", md)
         self.assertIn("Ofertas del", daily.title(data))
         with mock.patch.dict(os.environ, {"GITHUB_TOKEN": "", "GITHUB_REPOSITORY": ""}):

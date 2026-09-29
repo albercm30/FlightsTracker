@@ -24,7 +24,7 @@ Mi vigilante personal de vuelos. Funciona **entero en GitHub, gratis y sin orden
   2. pulsas **Guardar**: se abre GitHub con tus cambios ya escritos;
   3. pulsas **Create**: el workflow «Guardar ajustes» los aplica y vuelve a buscar precios.
 - **Duración por país:**
-  - en **Mis destinos**, cada país tiene su duración: fin de semana (viernes → domingo), 3 días, 10 días… o la general;
+  - en **Mis destinos**, cada país tiene su duración: fin de semana (viernes → domingo), un número de noches o un rango (p. ej. Argentina entre 10 y 15 noches), o la general; y sus escalas (solo directos, máx. 1 o cualquiera);
   - se usa al buscar precios, en el email y en las búsquedas de la web.
 - **Buscar en la web:** «Cuándo → Fin de semana (vie → dom)».
 

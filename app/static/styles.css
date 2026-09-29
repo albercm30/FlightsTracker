@@ -572,3 +572,5 @@ details.why summary { cursor: pointer; font-weight: 700; color: var(--brand); fo
 .dg-opts select.direct { border-color: var(--good); color: var(--good); font-weight: 700; }
 .dg-head b { flex: 1 1 auto; }
 @media (max-width: 640px) { .dg-opts select { font-size: .84rem; padding: 7px 4px 7px 8px; } }
+.dg-nights { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.dg-nights input { width: 72px; padding: 6px 8px; text-align: center; }

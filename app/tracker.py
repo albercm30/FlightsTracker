@@ -459,7 +459,8 @@ def cleanup(today: date):
 
 
 def trip_length(dest: str, settings: dict):
-    """Duración elegida para ese destino (o su país): "weekend", un nº de días, o None (la general)."""
+    """Duración elegida para ese destino (o su país) en «Mis destinos»:
+    "weekend", (noches_min, noches_max) o None (la duración general de Ajustes)."""
     tl = settings.get("trip_lengths") or {}
     if not isinstance(tl, dict):
         return None
@@ -468,11 +469,17 @@ def trip_length(dest: str, settings: dict):
         v = tl.get(catalog.info(dest).get("country_code", ""))
     if v == "weekend":
         return "weekend"
+    if isinstance(v, str) and "-" in v:
+        try:
+            lo, hi = (int(x) for x in v.split("-", 1))
+        except ValueError:
+            return None
+        return (lo, hi) if 1 <= lo <= hi <= 60 else None
     try:
-        v = int(v)
+        n = int(v)            # formato antiguo: días
     except (TypeError, ValueError):
         return None
-    return v if 2 <= v <= 60 else None
+    return (n - 1, n - 1) if 2 <= n <= 60 else None
 
 
 def dest_stops(dest: str, settings: dict):
@@ -502,15 +509,18 @@ STOPS_LABELS = {0: "solo directos", 1: "máx. 1 escala", 2: "máx. 2 escalas", -
 def length_label(spec) -> str:
     if spec == "weekend":
         return "fin de semana (vie–dom)"
-    return f"{spec} días" if spec else ""
+    if not spec:
+        return ""
+    lo, hi = spec
+    return f"{lo} noches" if lo == hi else f"{lo}–{hi} noches"
 
 
 def length_nights(spec):
-    """(noches mín., noches máx., filtro extra) para esa duración. N días = N-1 noches."""
+    """(noches mín., noches máx., filtro extra) para esa duración."""
     if spec == "weekend":
         return 2, 2, lambda q: _is_weekend(q)
     if spec:
-        return spec - 1, spec - 1, None
+        return spec[0], spec[1], None
     return None, None, None
 
 

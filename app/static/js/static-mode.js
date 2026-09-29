@@ -129,9 +129,20 @@ function staticBestScore(r) {
 }
 
 /* Duración elegida para un destino (o su país) en «Mis destinos»: 'weekend' | nº de días | null */
+/* Duración de un país en «Mis destinos» → 'weekend' | [noches mín., noches máx.] | null */
+function parseLength(v) {
+  if (v === 'weekend') return 'weekend';
+  if (typeof v === 'string' && /^\d+-\d+$/.test(v)) { const [a, b] = v.split('-').map(Number); return [Math.min(a, b), Math.max(a, b)]; }
+  const n = +v; return n >= 2 ? [n - 1, n - 1] : null;   // formato antiguo: días
+}
+function lengthText(spec) {
+  if (!spec) return '';
+  if (spec === 'weekend') return 'fin de semana (vie–dom)';
+  return spec[0] === spec[1] ? `${spec[0]} noches` : `${spec[0]}–${spec[1]} noches`;
+}
 function destLength(code) {
   const tl = (S.settings && S.settings.trip_lengths) || {};
-  return tl[code] || tl[cityInfo(code).country_code] || null;
+  return parseLength(tl[code] || tl[cityInfo(code).country_code] || null);
 }
 function destStopsPref(code) {
   const ds = (S.settings && S.settings.dest_stops) || {};
@@ -142,7 +153,7 @@ function lengthOk(q, spec) {
   if (!spec || !q.return_date) return true;
   const n = q.nights ?? Math.round((d8(q.return_date) - d8(q.depart_date)) / 86400000);
   if (spec === 'weekend') return n === 2 && (d8(q.depart_date).getDay() + 6) % 7 === 4 && (d8(q.return_date).getDay() + 6) % 7 === 6;
-  return n === +spec - 1;
+  return n >= spec[0] && n <= spec[1];
 }
 
 /* ---------- búsqueda en el navegador sobre los datos publicados ---------- */

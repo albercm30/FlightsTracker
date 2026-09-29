@@ -210,7 +210,10 @@ class DemoProvider(PriceProvider):
                 transfers = 1 if _u("stops", origin, dest, d) < 0.8 else 2
                 p *= 0.93 if transfers == 1 else 0.88
         elif catalog.distance_km(origin, dest) > 2600 and _u("stops", origin, dest) < 0.4:
-            transfers = 1
+            if direct_only:
+                p *= 1.08          # el directo existe pero suele ser algo más caro
+            else:
+                transfers = 1
         airline = (_h("al", origin, dest, d) % 997)
         canary = {"LPA", "TCI", "ACE", "FUE"}
         oi = catalog.info(origin)

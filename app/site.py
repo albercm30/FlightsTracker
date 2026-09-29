@@ -18,7 +18,7 @@ from .providers import booking_links, get_provider
 SETTINGS_KEYS = ["origins", "currency", "trip_type", "min_nights", "max_nights", "passengers", "baggage",
                  "direct_only", "months_ahead", "holiday_region", "min_days_ahead", "max_days_ahead",
                  "resident_discount", "alert_level", "alert_drops", "max_stops", "max_duration_h", "dep_windows",
-                 "exclude_airlines", "quiet_hours", "timezone", "trip_lengths"]
+                 "exclude_airlines", "quiet_hours", "timezone", "trip_lengths", "dest_stops"]
 QUOTE_KEYS = ("depart_date", "return_date", "nights", "price", "prev_price", "lowest_price", "airline", "transfers",
               "return_transfers", "duration", "return_duration", "dep_time", "ret_time", "link", "updated_at", "level")
 

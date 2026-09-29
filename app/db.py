@@ -145,7 +145,8 @@ DEFAULT_SETTINGS = {
     "max_duration_h": 0,           # 0 = sin límite (duración de cada trayecto)
     "dep_windows": "",             # franjas de salida: "night,morning,afternoon,evening" ("" = todas)
     "exclude_airlines": [],
-    "trip_lengths": {},            # duración por país o destino: {"AT": 3, "CH": "weekend", "ZA": 10} (días)
+    "trip_lengths": {},
+    "dest_stops": {},              # escalas por país o destino: {"PT": 0 (solo directos), "ZA": -1 (cualquiera)}            # duración por país o destino: {"AT": 3, "CH": "weekend", "ZA": 10} (días)
     "notify_max_items": 10,
     "watch_change_pct": 3,
     "search_cache_hours": 3,

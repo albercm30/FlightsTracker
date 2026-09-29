@@ -20,7 +20,7 @@ FIELDS = {
     "months_ahead": "months_ahead", "alert_level": "alert_level", "alert_drops": "alert_drops",
     "min_days_ahead": "min_days_ahead", "max_stops": "max_stops", "max_duration_h": "max_duration_h",
     "dep_windows": "dep_windows", "exclude_airlines": "exclude_airlines", "holiday_region": "holiday_region",
-    "trip_lengths": "trip_lengths",
+    "trip_lengths": "trip_lengths", "dest_stops": "dest_stops",
 }
 _IATA = re.compile(r"^[A-Z]{3}$")
 
@@ -66,6 +66,17 @@ def clean(cfg: dict) -> dict:
                         if 2 <= n <= 60:
                             tl[kk] = n
                 v = tl
+            elif k == "dest_stops":
+                ds = {}
+                for kk, vv in (v or {}).items() if isinstance(v, dict) else []:
+                    kk = str(kk).strip().upper()
+                    try:
+                        n = int(vv)
+                    except (TypeError, ValueError):
+                        continue
+                    if re.match(r"^[A-Z]{2,3}$", kk) and n in (-1, 0, 1, 2):
+                        ds[kk] = n
+                v = ds
             elif k == "dep_windows":
                 v = ",".join(w for w in (v.split(",") if isinstance(v, str) else v or [])
                              if w in ("night", "morning", "afternoon", "evening"))

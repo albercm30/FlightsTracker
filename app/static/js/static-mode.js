@@ -133,6 +133,11 @@ function destLength(code) {
   const tl = (S.settings && S.settings.trip_lengths) || {};
   return tl[code] || tl[cityInfo(code).country_code] || null;
 }
+function destStopsPref(code) {
+  const ds = (S.settings && S.settings.dest_stops) || {};
+  const v = ds[code] ?? ds[cityInfo(code).country_code];
+  return v === undefined || v === null || v === '' ? null : +v;
+}
 function lengthOk(q, spec) {
   if (!spec || !q.return_date) return true;
   const n = q.nights ?? Math.round((d8(q.return_date) - d8(q.depart_date)) / 86400000);
@@ -182,7 +187,8 @@ async function staticSearch(p) {
         if (p.return_weekdays && p.return_weekdays.length && !p.return_weekdays.includes((d8(q.return_date).getDay() + 6) % 7)) continue;
       }
       dated.push(q);
-      if (!staticQuoteOk(q, params)) continue;
+      const dsp = p.stops_custom ? null : destStopsPref(d);
+      if (!staticQuoteOk(q, dsp === null ? params : { ...params, max_stops: dsp })) continue;
       const h = hydrate(q, { origin: o, destination: d, trip: params.trip }, params.pax, params.baggage);
       if (p.max_price && h.price_pp_bags > p.max_price) continue;
       opts.push(h);

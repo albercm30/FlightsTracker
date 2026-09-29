@@ -227,6 +227,34 @@ class ScanAndSiteTest(TmpDB):
         self.assertRegex(html, r'src="static/js/admin\.js\?v=[\d.]+-\d+"')   # versionado contra la caché
 
 
+class ProviderSwitchTest(TmpDB):
+    def test_demo_history_is_wiped_when_real_prices_start(self):
+        self.assertFalse(tracker.reset_if_provider_changed("demo"))
+        db.execute("INSERT INTO route_stats(origin, destination, trip, scanned_at, min_price, median_price, count) "
+                   "VALUES ('TCI','LON','rt','x',50,80,10)")
+        self.assertFalse(tracker.reset_if_provider_changed("demo"))
+        self.assertEqual(db.one("SELECT COUNT(*) AS n FROM route_stats")["n"], 1)
+        self.assertTrue(tracker.reset_if_provider_changed("travelpayouts"))
+        self.assertEqual(db.one("SELECT COUNT(*) AS n FROM route_stats")["n"], 0)
+
+
+class DestStopsTest(TmpDB):
+    def test_direct_only_for_some_countries(self):
+        from app import config
+        cfg = config.clean({"dest_stops": {"GB": 0, "TH": "-1", "XX1": 0, "FR": 7}})
+        self.assertEqual(cfg["dest_stops"], {"GB": 0, "TH": -1})
+        db.update_settings({"origins": ["TCI"], "provider": "demo", "months_ahead": 3, "trip_type": "ow",
+                            "max_stops": 1, "dest_stops": {"GB": 0, "TH": -1}})
+        for c in ("LON", "BKK", "NYC"):
+            db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES (?,?,1,'x')", (c, c))
+        self.assertEqual(tracker.run_scan(notify=False)["status"], "ok")
+        stops = lambda c: {r["transfers"] for r in db.rows("SELECT transfers FROM quotes WHERE destination=?", (c,))}
+        self.assertEqual(stops("LON"), {0})                  # Reino Unido: solo directos
+        self.assertLessEqual(max(stops("NYC")), 1)           # resto: lo de Ajustes (máx. 1)
+        self.assertIn(2, stops("BKK"))                       # Tailandia: con o sin escalas
+        self.assertIn("solo directos", {d["destination"]: d["length"] for d in tracker.current_deals(10, trip="ow")}["LON"])
+
+
 class EnvConfigTest(TmpDB):
     def test_github_variables_are_the_config(self):
         db.execute("INSERT INTO destinations(code, name, enabled, created_at) VALUES ('ROM','Roma',1,'x')")

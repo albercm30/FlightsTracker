@@ -152,7 +152,7 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
   };
   drawAl();
   form.addEventListener('click', (e) => {
-    const st = e.target.closest('[data-stops] [data-s]'); if (st) { $$('[data-stops] [data-s]', form).forEach((x) => x.classList.toggle('on', x === st)); }
+    const st = e.target.closest('[data-stops] [data-s]'); if (st) { form._stopsDirty = true; $$('[data-stops] [data-s]', form).forEach((x) => x.classList.toggle('on', x === st)); }
     const w = e.target.closest('[data-win]'); if (w) w.classList.toggle('on');
     const rm = e.target.closest('[data-rmal]'); if (rm) { form._airlines.delete(rm.dataset.rmal); form._exclude.delete(rm.dataset.rmal); drawAl(); }
     if (e.target.closest('[data-reset]')) {
@@ -166,6 +166,7 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
   /* Ajuste rápido desde los resultados (escalas, aerolínea, franja, orden) */
   form.refine = (k, val) => {
     if (k === 'sort') form._sort = val;
+    if (k === 'stops') form._stopsDirty = true;
     if (k === 'stops') $$('[data-stops] [data-s]', form).forEach((x) => x.classList.toggle('on', x.dataset.s === String(val)));
     if (k === 'only') { form._exclude.delete(val); if (form._airlines.has(val)) form._airlines.delete(val); else form._airlines.add(val); }
     if (k === 'exclude') { form._airlines.delete(val); form._exclude.add(val); }
@@ -197,6 +198,7 @@ function searchForm(root, { mode = 'days', compact = false, values = {} } = {}) 
       if (wd.length && when !== 'weekend') p.weekdays = wd;
       if (form.max_price.value) p.max_price = +form.max_price.value;
       p.max_stops = +($('[data-stops] .on', form)?.dataset.s ?? -1);
+      if (form._stopsDirty) p.stops_custom = true;   // si tocas las escalas, mandan sobre las de cada destino
       p.direct_only = p.max_stops === 0;
       const dh = +form.max_duration_h.value; p.max_duration_h = dh >= 40 ? 0 : dh;
       p.dep_windows = $$('[data-win="dep"].on', form).map((b) => b.dataset.w);

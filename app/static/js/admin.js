@@ -20,7 +20,7 @@ async function currentConfig() {
     months_ahead: st.months_ahead ?? 12, holiday_region: st.holiday_region || '',
     alert_level: st.alert_level || 'muy_buena', alert_drops: !!st.alert_drops, min_days_ahead: st.min_days_ahead ?? 14,
     max_stops: st.max_stops ?? -1, max_duration_h: st.max_duration_h || 0, dep_windows: st.dep_windows || '',
-    exclude_airlines: st.exclude_airlines || [], trip_lengths: st.trip_lengths || {},
+    exclude_airlines: st.exclude_airlines || [], trip_lengths: st.trip_lengths || {}, dest_stops: st.dest_stops || {},
   };
 }
 const sameCfg = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -61,11 +61,11 @@ async function destinationsView(el) {
   const published = new Set((await api('/api/destinations')).map((d) => d.code));
   const w = await workingConfig();
   let list = [...w.cfg.destinations];
-  let lengths = { ...(w.cfg.trip_lengths || {}) };
-  const keep = () => saveDraft({ cfg: { ...w.cfg, destinations: list, trip_lengths: lengths } });
+  let lengths = { ...(w.cfg.trip_lengths || {}) }, stopsBy = { ...(w.cfg.dest_stops || {}) };
+  const keep = () => saveDraft({ cfg: { ...w.cfg, destinations: list, trip_lengths: lengths, dest_stops: stopsBy } });
   const draw = () => {
-    const changed = !sameCfg(list, w.cur.destinations) || !sameCfg(lengths, w.cur.trip_lengths || {});
-    el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los vigilamos cada día y a las 8:00 te llega un email con sus mejores ofertas. Elige cuánto quieres viajar a cada país.</p></div></div>
+    const changed = !sameCfg(list, w.cur.destinations) || !sameCfg(lengths, w.cur.trip_lengths || {}) || !sameCfg(stopsBy, w.cur.dest_stops || {});
+    el.innerHTML = `<div class="page-head"><div><h1>Mis destinos</h1><p>Los vigilamos cada día y a las 8:00 te llega un email con sus mejores ofertas. Elige para cada país cuántos días quieres viajar y si solo quieres vuelos directos.</p></div></div>
       ${pendingBanner(w.draft)}
       <div class="card pad"><div class="row">
         <div style="flex:1;min-width:220px"><input id="sdIn" placeholder="Ciudad, código o país entero…"></div>
@@ -73,7 +73,7 @@ async function destinationsView(el) {
         <div class="chips" style="margin-top:12px"><span class="small muted" style="align-self:center">De golpe:</span>${Object.entries(S.meta.themes).map(([k, t]) => `<button class="chip" data-th="${k}">${t.icon} ${esc(t.label)}</button>`).join('')}</div></div>
       <div class="card pad section"><div class="row"><h3>${list.length} destinos</h3><span class="spacer"></span>
         <button class="btn ${changed ? 'primary' : ''}" id="sdSave" ${changed ? '' : 'disabled'}>${ic('check')} Guardar</button></div>
-        <div class="dest-groups">${destGroups(list, published, lengths)}</div>
+        <div class="dest-groups">${destGroups(list, published, lengths, stopsBy)}</div>
         ${saveHelp()}</div>`;
     paintIcons(el); bindPending(el, w.cfg);
     attachAC($('#sdIn'), { onPick: () => setTimeout(() => $('#sdAdd')?.click(), 0) });
@@ -89,26 +89,30 @@ async function destinationsView(el) {
       const th = e.target.closest('[data-th]'); if (th) add((S.meta.theme_codes[th.dataset.th] || []).filter((c) => !(w.cfg.origins || []).includes(c)));
     };
     el.onchange = (e) => {
+      const st = e.target.closest('[data-stops-cc]');
+      if (st) { if (st.value === '') delete stopsBy[st.dataset.stopsCc]; else stopsBy[st.dataset.stopsCc] = +st.value; keep(); draw(); return; }
       const t = e.target.closest('[data-len]'); if (!t) return;
       if (t.value) lengths[t.dataset.len] = t.value === 'weekend' ? 'weekend' : +t.value; else delete lengths[t.dataset.len];
       keep(); draw();
     };
-    $('#sdSave').onclick = () => { Object.assign(w.cfg, { destinations: list, trip_lengths: lengths }); sendConfig(w.cfg); w.draft = loadDraft(); draw(); };
+    $('#sdSave').onclick = () => { Object.assign(w.cfg, { destinations: list, trip_lengths: lengths, dest_stops: stopsBy }); sendConfig(w.cfg); w.draft = loadDraft(); draw(); };
   };
   draw();
 }
 /* Destinos agrupados por país, con la duración del viaje de cada país */
-const LEN_OPTS = [['', 'Duración general'], ['weekend', 'Fin de semana (vie–dom)'], ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 25, 30].map((n) => [String(n), `${n} días`])];
+const LEN_OPTS = [['', 'Días: general'], ['weekend', 'Finde (vie–dom)'], ...[2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 14, 16, 18, 21, 25, 30].map((n) => [String(n), `${n} días`])];
 function lenLabel(v) { return v === 'weekend' ? 'fin de semana' : v ? `${v} días` : ''; }
-function destGroups(list, published, lengths) {
+const STOP_OPTS = [['', 'Escalas: general'], ['0', '✈ Directos'], ['1', 'Máx. 1 escala'], ['-1', 'Cualquiera']];
+function destGroups(list, published, lengths, stopsBy = {}) {
   if (!list.length) return '<p class="muted small" style="margin:12px 0 0">Aún no hay destinos. Añade alguno arriba.</p>';
   const groups = {};
   list.forEach((c) => { const cc = cityInfo(c).country_code || '??'; (groups[cc] = groups[cc] || []).push(c); });
   const cname = (cc) => (S.countries.find((x) => x.country_code === cc) || {}).country || cityInfo(groups[cc][0]).country || cc;
   return Object.keys(groups).sort((a, b) => cname(a).localeCompare(cname(b))).map((cc) => {
-    const v = lengths[cc] ?? '';
-    return `<div class="dgroup"><div class="dg-head">${flag(cc)}<b>${esc(cname(cc))}</b><span class="spacer"></span>
-      <select data-len="${cc}" title="Duración del viaje a ${esc(cname(cc))}">${LEN_OPTS.map(([k, l]) => `<option value="${k}" ${String(v) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+    const v = lengths[cc] ?? '', sv = stopsBy[cc] ?? '';
+    return `<div class="dgroup"><div class="dg-head">${flag(cc)}<b>${esc(cname(cc))}</b></div>
+      <div class="dg-opts"><select data-len="${cc}" title="Duración del viaje a ${esc(cname(cc))}">${LEN_OPTS.map(([k, l]) => `<option value="${k}" ${String(v) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+      <select data-stops-cc="${cc}" title="Escalas para ${esc(cname(cc))}" class="${sv === 0 ? 'direct' : ''}">${STOP_OPTS.map(([k, l]) => `<option value="${k}" ${String(sv) === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
       <div class="chips dest-chips">${groups[cc].map((c) => `<span class="chip">${esc(cityName(c))} <span class="tiny muted">${c}</span>${published.has(c) ? '' : ' <span class="pill warn" title="Tendrá precios tras guardar">nuevo</span>'}<button class="x" data-rm="${c}" title="Quitar">×</button></span>`).join('')}</div></div>`;
   }).join('');
 }

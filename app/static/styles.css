@@ -567,4 +567,8 @@ details.why summary { cursor: pointer; font-weight: 700; color: var(--brand); fo
 .dgroup { border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; display: grid; gap: 8px; min-width: 0; }
 .dg-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
 .dg-head b { min-width: 0; }
-.dg-head select { width: auto; max-width: 100%; flex: 0 1 200px; padding: 6px 10px; }
+.dg-opts { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.dg-opts select { width: 100%; min-width: 0; padding: 7px 10px; font-size: .9rem; }
+.dg-opts select.direct { border-color: var(--good); color: var(--good); font-weight: 700; }
+.dg-head b { flex: 1 1 auto; }
+@media (max-width: 640px) { .dg-opts select { font-size: .84rem; padding: 7px 4px 7px 8px; } }

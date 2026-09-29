@@ -475,6 +475,30 @@ def trip_length(dest: str, settings: dict):
     return v if 2 <= v <= 60 else None
 
 
+def dest_stops(dest: str, settings: dict):
+    """Escalas elegidas para ese destino (o su país) en «Mis destinos»; None = las de Ajustes."""
+    ds = settings.get("dest_stops") or {}
+    if not isinstance(ds, dict):
+        return None
+    v = ds.get(dest.upper())
+    if v is None:
+        v = ds.get(catalog.info(dest).get("country_code", ""))
+    try:
+        v = int(v)
+    except (TypeError, ValueError):
+        return None
+    return v if v in (-1, 0, 1, 2) else None
+
+
+def dest_settings(dest: str, settings: dict) -> dict:
+    """Ajustes efectivos para un destino (con sus escalas propias, si las tiene)."""
+    st = dest_stops(dest, settings)
+    return settings if st is None else {**settings, "max_stops": st, "direct_only": st == 0}
+
+
+STOPS_LABELS = {0: "solo directos", 1: "máx. 1 escala", 2: "máx. 2 escalas", -1: "con o sin escalas"}
+
+
 def length_label(spec) -> str:
     if spec == "weekend":
         return "fin de semana (vie–dom)"
@@ -498,6 +522,7 @@ def _fetch_route(provider, origin, dest, months, settings, errors, delay=0.0, tr
     """Lo más barato por día de salida. En ida y vuelta, si se pasa `weekends` (dict), guarda ahí
     además lo más barato de cada fin de semana viernes→domingo, sacado de la misma respuesta."""
     quotes, wk = [], []
+    settings = dest_settings(dest, settings)
     base_keep = scan_filter(settings)
     spec = trip_length(dest, settings) if trip == "rt" else None
     lo, hi, extra = length_nights(spec)
@@ -550,6 +575,21 @@ def backfill_demo(origin: str, dest: str, settings: dict, trip: str = "ow", days
 
 # ---------------------------------------------------------------------------
 # escaneo completo
+def reset_if_provider_changed(name: str) -> bool:
+    """Al pasar de precios simulados a reales (o al revés) se borra el histórico anterior,
+    para no mezclar precios de mentira con los de verdad en «lo habitual» y los chollos."""
+    last = db.one("SELECT value FROM settings WHERE key='_provider'")
+    prev = last["value"].strip('"') if last else None
+    changed = prev is not None and prev != name and "demo" in (prev, name)
+    with db.connect() as c:
+        if changed:
+            for t in ("quotes", "route_stats", "quote_history", "alerts"):
+                c.execute(f"DELETE FROM {t}")
+            log.info("Proveedor %s → %s: histórico anterior borrado", prev, name)
+        c.execute("INSERT OR REPLACE INTO settings(key, value) VALUES('_provider', ?)", (f'"{name}"',))
+    return changed
+
+
 def run_scan(provider=None, today: date = None, notify: bool = True) -> dict:
     if not scan_lock.acquire(blocking=False):
         return {"status": "busy"}
@@ -560,6 +600,7 @@ def run_scan(provider=None, today: date = None, notify: bool = True) -> dict:
         settings = db.get_settings()
         today = today or date.today()
         provider = provider or get_provider(settings)
+        reset_if_provider_changed(provider.name)
         origins = [o.upper() for o in settings.get("origins") or []]
         dests = db.rows("SELECT * FROM destinations WHERE enabled=1 ORDER BY name")
         months = month_list(today, int(settings.get("months_ahead", 12)))
@@ -653,7 +694,8 @@ def current_deals(limit: int = 30, today: date = None, trip: str = None):
                 m = q["depart_date"][:7]
                 spark[m] = min(spark.get(m, q["price"]), q["price"])
         out.append({**best, "name": dest["name"], "country": dest["country"], "max_price": dest["max_price"],
-                    "length": length_label(trip_length(dest["code"], settings)) if trip == "rt" else "",
+                    "length": ", ".join(x for x in (length_label(trip_length(dest["code"], settings)) if trip == "rt" else "",
+                                                     STOPS_LABELS.get(dest_stops(dest["code"], settings), "")) if x),
                     "median": median, "savings": (1 - best["price"] / median) if median else 0,
                     "range": [min(route_prices), median, max(route_prices)] if route_prices else None,
                     "spark": [spark[k] for k in sorted(spark)]})

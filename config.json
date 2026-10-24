@@ -38,7 +38,7 @@
     },
     {
       "id": "argentina",
-      "name": "Sudámerica",
+      "name": "Sudámerica largo",
       "origins": [
         "MAD",
         "BCN"
@@ -65,7 +65,7 @@
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 700.0,
+      "max_price": 500.0,
       "enabled": true
     },
     {
@@ -94,7 +94,150 @@
       },
       "stops": "direct",
       "weekdays": [],
-      "max_price": null,
+      "max_price": 50.0,
+      "enabled": true
+    },
+    {
+      "id": "africa-wildlife",
+      "name": "Africa (wildlife)",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "CPT",
+        "JNB",
+        "DUR",
+        "WDH",
+        "NBO",
+        "MBA",
+        "DAR",
+        "JRO",
+        "EBB",
+        "KGL",
+        "MPM",
+        "LBV",
+        "GBE"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 7,
+        "max": 20
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "max1",
+      "weekdays": [],
+      "max_price": 400.0,
+      "enabled": true
+    },
+    {
+      "id": "centro-america",
+      "name": "Centro América",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "SJO",
+        "LIR",
+        "PTY"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 7,
+        "max": 14
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "max1",
+      "weekdays": [],
+      "max_price": 400.0,
+      "enabled": true
+    },
+    {
+      "id": "sudamerica-corto",
+      "name": "Sudamérica corto",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "VVI",
+        "LPB",
+        "BOG",
+        "MDE",
+        "CTG",
+        "CLO",
+        "ADZ",
+        "UIO",
+        "GYE",
+        "GPS",
+        "CCS",
+        "PMV"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 7,
+        "max": 15
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "max1",
+      "weekdays": [],
+      "max_price": 400.0,
+      "enabled": true
+    },
+    {
+      "id": "asia",
+      "name": "Asia",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "DPS",
+        "JKT",
+        "LOP",
+        "KTM",
+        "POM",
+        "SEL",
+        "PUS",
+        "CJU",
+        "TYO",
+        "OSA",
+        "FUK",
+        "OKA",
+        "SPK",
+        "ULN",
+        "FRU"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 10,
+        "max": 20
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "max1",
+      "weekdays": [],
+      "max_price": 550.0,
       "enabled": true
     }
   ]

@@ -269,7 +269,7 @@
       },
       "stops": "any",
       "weekdays": [],
-      "max_price": null,
+      "max_price": 250.0,
       "enabled": true
     }
   ]

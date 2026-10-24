@@ -1,7 +1,8 @@
 __pycache__/
 *.pyc
 .venv/
-data/
-site/
+# solo las carpetas de la raíz (la base de datos y la web generada), NO tracker/data/
+/data/
+/site/
 *.db
 .DS_Store

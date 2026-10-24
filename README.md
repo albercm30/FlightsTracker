@@ -1,89 +1,103 @@
 # ✈️ Flight Tracker
 
-Mi vigilante personal de vuelos. Funciona **entero en GitHub, gratis y sin ordenador encendido**:
+Mi buscador personal de chollos de vuelos. Funciona **entero en GitHub, gratis y sin ordenador encendido**:
 
-- 🔎 **Busca precios** de mis destinos cada día, para cada fecha de los próximos meses, con la duración que elijo para cada país.
-- 📧 **Me manda un email cada mañana a las 8:00** con las mejores ofertas y los chollos destacados.
-- 🌐 **Publica mi web** en GitHub Pages, donde puedo:
-  - ver los precios, el mejor día, el mapa para explorar destinos y los puentes;
-  - usar filtros tipo Skyscanner: escalas, duración, hora de salida, aerolíneas;
-  - cambiar desde la web mis destinos, la duración de cada país y los filtros.
+- 🔎 **Cada mañana** busca los precios de mis *seguimientos* para todas las fechas.
+  - Un seguimiento junta orígenes, destinos, fechas, estancia y escalas.
+- 🌐 **Publica la web** en GitHub Pages, con gráficos y un buscador. Se ve bien en el portátil y en el móvil.
+- 📧 **Me avisa por email** solo cuando hay un **chollo top**.
 
-| Inicio | Mejor día |
+| Hoy | Un seguimiento |
 |---|---|
-| ![Inicio](docs/inicio.jpg) | ![Mejor día](docs/mejor-dia.jpg) |
+| ![Hoy](docs/hoy.jpg) | ![Seguimiento](docs/seguimiento.jpg) |
+| **Buscar** | **Ficha de un vuelo** |
+| ![Buscar](docs/buscar.jpg) | ![Vuelo](docs/vuelo.jpg) |
 
-## Cómo funciona (sin usuarios ni contraseñas)
+## Qué puedo hacer
 
-- **Cada día, a las 8:00 (hora de Madrid):**
-  - GitHub busca los precios de tus destinos;
-  - publica en el repositorio una *issue* con el resumen de ofertas que te menciona;
-  - GitHub te la manda por email a **albertocm30.2001@gmail.com**, el email de tu cuenta de GitHub.
-- **Tus destinos, filtros y la duración de cada viaje** están en `config.json`. Desde la web:
-  1. cambias lo que quieras en **Mis destinos** o **Ajustes**;
-  2. pulsas **Guardar**: se abre GitHub con tus cambios ya escritos;
-  3. pulsas **Create**: el workflow «Guardar ajustes» los aplica y vuelve a buscar precios.
-- **Duración por país:**
-  - en **Mis destinos**, cada país tiene su duración: fin de semana (viernes → domingo), un número de noches o un rango (p. ej. Argentina entre 10 y 15 noches), o la general; y sus escalas (solo directos, máx. 1 o cualquiera);
-  - se usa al buscar precios, en el email y en las búsquedas de la web.
-- **Buscar en la web:** «Cuándo → Fin de semana (vie → dom)».
-
-### Puesta en marcha (una vez)
-1. Sube este código a tu repositorio de GitHub.
-2. En GitHub → **Settings → Pages → Source: «GitHub Actions»**.
-3. **Actions → «Escaneo programado» → Run workflow** (marca «Enviarme ahora el resumen» para probar el email).
-4. **Precios reales:** crea el secret `TRAVELPAYOUTS_TOKEN` (clave gratis de [Travelpayouts](https://www.travelpayouts.com)) en **Settings → Secrets and variables → Actions**. Sin él, los precios son simulados.
-5. **Si el email no llega:**
-   - en [github.com/settings/notifications](https://github.com/settings/notifications), comprueba que el email por defecto es el tuyo y que «Email» está marcado;
-   - mira en Spam la primera vez.
-
-## Qué es un chollo (destacado en el email)
-
-En **Ajustes → Qué es un chollo** eliges el nivel:
-
-| Nivel | La oferta tiene que estar… |
+| Quiero… | Dónde |
 |---|---|
-| Solo excepcionales | ≥ 40 % por debajo del precio habitual de la ruta, entre el 5 % de fechas más baratas y ≥ 25 % por debajo de las fechas de alrededor |
-| **Muy buenas** (por defecto) | ≥ 30 % por debajo de lo habitual, top 10 % y ≥ 18 % por debajo de las fechas cercanas |
-| Buenas | ≥ 20 % por debajo de lo habitual, top 20 % y ≥ 10 % por debajo de las fechas cercanas |
+| Elegir aeropuertos de **salida y destino** (también países enteros) | Configurar |
+| Elegir **fechas**: próximos N meses o entre dos fechas, y días de salida | Configurar · Buscar |
+| Elegir la **estancia**: nº de noches (o un rango), fin de semana vie→dom o puente | Configurar · Buscar |
+| **Ida y vuelta** o **solo ida** | Configurar · Buscar |
+| **Solo directos**, máx. 1 escala o cualquiera | Configurar · Buscar |
+| Ver **gráficos** de precios (ver lista debajo) | Seguimientos |
+| Buscar libremente entre todas las fechas de mis rutas | Buscar |
+| Recibir un **email** cuando hay un chollo top | Automático |
 
-- Comparar con las fechas cercanas evita avisarte de algo que solo es temporada baja.
-- También avisa de mínimos históricos con un ahorro claro.
-- Las bajadas simples están desactivadas por defecto.
-- **Sin spam:**
-  - un solo email al día, con como mucho un chollo por destino;
-  - un destino no vuelve a destacarse en 14 días salvo que salga algo un 10 % más barato.
+Los gráficos de cada seguimiento son:
+- calendario de precios de 12 meses;
+- evolución diaria del precio;
+- más barato por mes, por destino, por nº de noches, por día de la semana y por aeropuerto de salida;
+- distribución de precios.
 
-## Filtros
+## Puesta en marcha (una vez)
 
-Cada vuelo muestra la **duración**, las **escalas** y la **hora de salida**.
+1. **Sube estos ficheros** a tu repositorio de GitHub (debe ser **público** para que Pages sea gratis).
+2. GitHub → **Settings → Pages → Source: «GitHub Actions»**.
+3. **Precios reales:**
+   - en GitHub → **Settings → Secrets and variables → Actions → New repository secret**, crea `TRAVELPAYOUTS_TOKEN`;
+   - su valor es tu clave gratuita de [travelpayouts.com](https://www.travelpayouts.com) (Tools → API).
+   - Sin clave, la web funciona con precios **simulados**.
+4. GitHub → **Actions → «Actualizar vuelos» → Run workflow**. En unos minutos tienes la web en `https://<usuario>.github.io/<repositorio>/`.
 
-- **En Ajustes → Filtros:** los que elijas se aplican a lo que se vigila y avisa, y son los filtros por defecto de tus búsquedas:
-  - escalas;
-  - duración máxima por trayecto;
-  - franja horaria de salida;
-  - aerolíneas que no quieres.
-- **En las búsquedas:** además, puedes ordenar por **Más barato / Mejor / Más rápido** y afinar con los filtros rápidos.
+A partir de ahí se actualiza sola **cada mañana a las 8:00 (hora de Madrid)**.
 
-## Equipaje y residente
+## Cambiar lo que vigilo
 
-- **Equipaje:** las APIs de precios no dicen qué equipaje incluye cada billete. La web lo **estima** según la aerolínea y calcula el total con tu opción de equipaje y viajeros.
-- **Residentes de Canarias o Baleares:** el precio con descuento (75 % en vuelos nacionales) es una estimación.
+En la web, pestaña **Configurar**:
+1. Edita o crea seguimientos.
+2. Pulsa **Guardar en GitHub**. Se abre GitHub con los cambios ya escritos (tienes la sesión iniciada).
+3. Pulsa **Create**.
+
+El workflow «Guardar configuración» escribe `config.json`, busca precios y actualiza la web en unos minutos. No hay usuarios ni contraseñas: solo acepta cambios creados por el dueño del repositorio.
+
+> Si actualizas el código más adelante, haz antes `git pull`: la web guarda tus seguimientos en `config.json`.
+
+## Avisos por email
+
+Te llega un email solo cuando un seguimiento tiene un **chollo top**:
+
+- **Chollo:** puntuación ≥ 80/100 y un 25 % (configurable) por debajo del precio habitual. Además tiene que ser barato también frente a las fechas cercanas, para no avisar de algo que solo es temporada baja.
+- **Precio objetivo:** por debajo del «Avisarme siempre por debajo de» del seguimiento.
+- **Mínimo histórico:** el más barato visto nunca en ese seguimiento.
+
+**Sin spam:**
+- como mucho 3 chollos por seguimiento, y uno por destino;
+- un seguimiento no vuelve a avisar en 14 días salvo que salga algo un 10 % más barato.
+
+**Cómo llega:**
+- Sin configurar nada: se publica una *issue* en tu repositorio que te menciona, y **GitHub te la manda al email de tu cuenta**. Comprueba en [github.com/settings/notifications](https://github.com/settings/notifications) que el email es el tuyo.
+- Si prefieres que llegue desde tu propio Gmail, crea los secrets:
+  - `GMAIL_ADDRESS`;
+  - `GMAIL_APP_PASSWORD` (una [contraseña de aplicación](https://myaccount.google.com/apppasswords)).
+- Para probarlo: **Actions → Actualizar vuelos → Run workflow** con «Enviarme un email de prueba».
+
+## La puntuación de un vuelo (0–100)
+
+- **55 %:** cuánto más barato es que el precio habitual del seguimiento (mediana de los últimos días).
+- **45 %:** su posición frente a todas las fechas y combinaciones posibles.
 
 ## Estructura
 
 ```
-.github/workflows/scan.yml   escaneo diario + resumen a las 8:00 + publicar la web
-app/tracker.py               escaneo, detección de ofertas y anti-spam
-app/site.py                  genera la web (datos en JSON)
-app/providers/               travelpayouts.py (precios reales) · demo.py (simulados)
-app/catalog*.py              195 países y sus aeropuertos
-app/static/                  la web (HTML/CSS/JS sin dependencias)
-  js/admin.js                Ajustes y Mis destinos («Guardar» → issue en GitHub)
-app/config.py                config.json (tus ajustes)
-app/daily.py                 el resumen diario
-.github/workflows/config.yml aplica los ajustes guardados desde la web
-tests/                       python -m pytest
+config.json                  tus seguimientos (los cambia la web)
+tracker/                     Python (solo usa «requests»)
+  providers.py               Travelpayouts (real) · Demo (simulado)
+  scan.py                    descarga en paralelo todas las rutas y meses
+  analysis.py                filtros, puntuación, chollos y datos de los gráficos
+  alerts.py                  emails de chollos
+  build.py                   genera la web (datos JSON)
+  data/airports.json         195 países y sus aeropuertos
+web/                         la web (HTML/CSS/JS sin librerías; gráficos SVG propios)
+.github/workflows/
+  update.yml                 cada mañana: precios → avisos → web
+  config.yml                 aplica los cambios hechos en «Configurar»
+  tests.yml                  tests
+tests/                       python -m unittest discover -s tests
 ```
 
-La clave de Travelpayouts es un *secret* de GitHub y **nunca** se publica en la web.
+**Probar en local (opcional):** `python -m tracker demo site`, luego `python -m http.server -d site` y abre http://localhost:8000.
+
+Los precios son de búsquedas recientes en Aviasales (Travelpayouts): compruébalos siempre al reservar.

@@ -1,0 +1,93 @@
+# Actualiza tus vuelos cada mañana (gratis, en GitHub):
+#   1) busca los precios de todos tus seguimientos (config.json)
+#   2) detecta chollos top y te avisa por email
+#   3) publica la web en https://<usuario>.github.io/<repositorio>/
+name: Actualizar vuelos
+
+on:
+  schedule:
+    # GitHub usa hora UTC: se lanza a las 5:40 y 6:40 UTC y solo sigue la que cae a las 7:40 en Madrid
+    # (así funciona en horario de verano e invierno). La web y los avisos están listos sobre las 8:00.
+    - cron: "40 5 * * *"
+    - cron: "40 6 * * *"
+  workflow_dispatch:
+    inputs:
+      test_alert:
+        description: "Enviarme un email de prueba con el mejor chollo actual"
+        type: boolean
+        default: false
+  push:
+    branches: [main, master]
+    paths: ["config.json", "web/**", "tracker/**", ".github/workflows/update.yml"]
+
+permissions:
+  contents: read
+  issues: write      # el aviso de chollos se publica como issue y GitHub te lo manda por email
+  pages: write
+  id-token: write
+
+concurrency:
+  group: update
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      run: ${{ steps.gate.outputs.run }}
+    env:
+      DB_PATH: data/flights.db
+      TRAVELPAYOUTS_TOKEN: ${{ secrets.TRAVELPAYOUTS_TOKEN }}
+      GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+      GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+      GITHUB_TOKEN: ${{ github.token }}
+    steps:
+      - name: ¿Es la hora? (7:40 en Madrid)
+        id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ] || [ "$(TZ=Europe/Madrid date +%H)" = "07" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "Ahora no toca (cambio de hora): la otra ejecución de hoy es la buena."
+          fi
+      - uses: actions/checkout@v4
+        if: steps.gate.outputs.run == 'true'
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.run == 'true'
+        with:
+          python-version: "3.12"
+          cache: pip
+      - if: steps.gate.outputs.run == 'true'
+        run: pip install -r requirements.txt
+      - name: Recuperar el histórico de precios
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/cache/restore@v4
+        with:
+          path: data/flights.db
+          key: ft7-db-${{ github.run_id }}
+          restore-keys: ft7-db-
+      - name: Buscar precios, avisar y generar la web
+        if: steps.gate.outputs.run == 'true'
+        run: python -m tracker ${{ inputs.test_alert && 'test-alert' || 'update' }} site
+      - name: Guardar el histórico de precios
+        if: always() && steps.gate.outputs.run == 'true' && hashFiles('data/flights.db') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: data/flights.db
+          key: ft7-db-${{ github.run_id }}
+      - uses: actions/upload-pages-artifact@v3
+        if: success() && steps.gate.outputs.run == 'true'
+        with:
+          path: site
+
+  deploy:
+    needs: update
+    if: needs.update.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

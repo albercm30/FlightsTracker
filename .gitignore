@@ -1,10 +1,7 @@
 __pycache__/
 *.pyc
 .venv/
-venv/
-.env
 data/
+site/
 *.db
-*.db-journal
-.pytest_cache/
 .DS_Store

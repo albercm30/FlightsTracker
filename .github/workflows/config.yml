@@ -1,16 +1,16 @@
-# Guarda los ajustes que envías desde tu web (sin usuarios ni claves):
-# al pulsar «Guardar» en la web se abre GitHub con una issue «⚙️ …» ya rellena; al crearla,
-# este workflow comprueba que la has creado tú, escribe config.json y lanza un escaneo.
-name: Guardar ajustes
+# Guarda lo que cambias en la web (pestaña «Configurar») sin usuarios ni claves:
+# «Guardar en GitHub» abre una issue «⚙️ …» ya rellena; al crearla, esto escribe config.json
+# y lanza la actualización. Solo acepta issues creadas por el dueño del repositorio.
+name: Guardar configuración
 
 on:
   issues:
     types: [opened]
 
 permissions:
-  contents: write    # escribir config.json
-  issues: write      # cerrar la issue
-  actions: write     # lanzar el escaneo
+  contents: write
+  issues: write
+  actions: write
 
 jobs:
   apply:
@@ -21,32 +21,25 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
       - name: Guardar en config.json
-        id: cfg
-        run: python -m app apply-config
-
+        run: python -m tracker apply-config
       - name: Subir el cambio
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add config.json
-          if git diff --cached --quiet; then echo "Sin cambios"; exit 0; fi
-          git commit -m "Ajustes desde la web (#${{ github.event.issue.number }})"
-          git push
-
-      - name: Buscar precios con los nuevos ajustes
+          if git diff --cached --quiet; then echo "Sin cambios"; else git commit -m "Configuración desde la web (#${{ github.event.issue.number }})" && git push; fi
+      - name: Actualizar vuelos con la nueva configuración
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run scan.yml --ref "${{ github.event.repository.default_branch }}" -f resumen=${{ steps.cfg.outputs.resumen || 'false' }}
-
+        run: gh workflow run update.yml --ref "${{ github.event.repository.default_branch }}"
       - name: Cerrar la issue
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ job.status }}" = "success" ]; then
-            gh issue close ${{ github.event.issue.number }} --comment "✅ Guardado. Tu web se actualizará en unos minutos." -R ${{ github.repository }}
+            gh issue close ${{ github.event.issue.number }} -R ${{ github.repository }} --comment "✅ Guardado. Tu web se actualizará en unos minutos."
           else
-            gh issue comment ${{ github.event.issue.number }} --body "❌ No se pudieron guardar los ajustes. Mira el detalle en Actions." -R ${{ github.repository }}
+            gh issue comment ${{ github.event.issue.number }} -R ${{ github.repository }} --body "❌ No se pudo guardar. Mira el detalle en Actions."
           fi

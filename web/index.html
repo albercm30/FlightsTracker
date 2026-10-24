@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Flight Tracker</title>
+  <meta name="theme-color" content="#070b18">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Vuelos">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✈️</text></svg>">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+  <script>try { const t = localStorage.getItem('ft-theme'); if (t) document.documentElement.dataset.theme = t; } catch (e) {}</script>
+</head>
+<body>
+  <header class="top">
+    <a class="logo" href="#home"><span class="mk">✈</span><span>Flight Tracker</span></a>
+    <nav class="nav">
+      <a href="#home" data-nav="home">Hoy</a>
+      <a href="#search" data-nav="search">Buscar</a>
+      <a href="#watches" data-nav="watches">Seguimientos</a>
+      <a href="#config" data-nav="config">Configurar</a>
+    </nav>
+    <span class="sp"></span>
+    <div class="status" id="status"></div>
+    <button class="iconbtn" id="theme" title="Cambiar tema">◐</button>
+  </header>
+  <main id="app"><div class="empty"><div class="big">✈️</div>Cargando…</div></main>
+  <nav class="bottomnav">
+    <a href="#home" data-nav="home"><i>🏠</i>Hoy</a>
+    <a href="#search" data-nav="search"><i>🔎</i>Buscar</a>
+    <a href="#watches" data-nav="watches"><i>📈</i>Seguimientos</a>
+    <a href="#config" data-nav="config"><i>⚙️</i>Configurar</a>
+  </nav>
+  <script>
+    window.addEventListener('error', function (e) {
+      var m = document.getElementById('app'); if (!m || m.dataset.err) return; m.dataset.err = 1;
+      var d = document.createElement('div'); d.className = 'card pad'; d.style.marginBottom = '16px';
+      d.innerHTML = '<b>La web no ha cargado bien.</b> Prueba a recargar. <button class="btn sm" onclick="location.reload()">Recargar</button><div class="tiny muted"></div>';
+      d.querySelector('.tiny').textContent = (e.message || '') + (e.filename ? ' · ' + e.filename.split('/').pop() : '');
+      m.prepend(d);
+    });
+  </script>
+  <script src="js/charts.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

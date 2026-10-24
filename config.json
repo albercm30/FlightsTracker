@@ -277,9 +277,7 @@
       "name": "Ona fin de año",
       "origins": [
         "MAD",
-        "LPA",
-        "BCN",
-        "TCI"
+        "BCN"
       ],
       "destinations": [
         "CPT",
@@ -305,7 +303,11 @@
         "CPH",
         "PTY",
         "SJO",
-        "LIR"
+        "LIR",
+        "ZRH",
+        "GVA",
+        "VVI",
+        "LPB"
       ],
       "trip": "rt",
       "stay": {
@@ -315,11 +317,11 @@
       },
       "dates": {
         "from": "2026-12-26",
-        "to": "2027-01-05"
+        "to": "2026-12-30"
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 500.0,
+      "max_price": 550.0,
       "enabled": true
     }
   ]

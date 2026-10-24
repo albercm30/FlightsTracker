@@ -271,6 +271,56 @@
       "weekdays": [],
       "max_price": 250.0,
       "enabled": true
+    },
+    {
+      "id": "ona-fin-de-ano",
+      "name": "Ona fin de año",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "CPT",
+        "JNB",
+        "DUR",
+        "NBO",
+        "MBA",
+        "ZNZ",
+        "JRO",
+        "DAR",
+        "HEL",
+        "RVN",
+        "OSL",
+        "TOS",
+        "BGO",
+        "WDH",
+        "TNR",
+        "NOS",
+        "LIM",
+        "CUZ",
+        "AQP",
+        "REK",
+        "CPH",
+        "PTY",
+        "SJO",
+        "LIR"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 6,
+        "max": 11
+      },
+      "dates": {
+        "from": "2026-12-26",
+        "to": "2027-01-05"
+      },
+      "stops": "max1",
+      "weekdays": [],
+      "max_price": null,
+      "enabled": true
     }
   ]
 }

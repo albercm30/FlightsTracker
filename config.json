@@ -1,15 +1,101 @@
 {
   "currency": "eur",
-  "alerts": {"min_discount": 25, "min_score": 80, "cooldown_days": 14},
+  "alerts": {
+    "min_discount": 35,
+    "min_score": 85,
+    "cooldown_days": 14
+  },
   "watches": [
-    {"id": "findes-europa", "name": "Findes en Europa", "origins": ["TCI", "MAD"],
-     "destinations": ["LON", "PAR", "ROM", "LIS", "AMS", "BER"], "trip": "rt", "stay": {"type": "weekend"},
-     "dates": {"months": 6}, "stops": "direct", "weekdays": [], "max_price": null, "enabled": true},
-    {"id": "argentina", "name": "Argentina", "origins": ["TCI", "MAD"], "destinations": ["BUE"], "trip": "rt",
-     "stay": {"type": "nights", "min": 10, "max": 15}, "dates": {"months": 12}, "stops": "max1",
-     "weekdays": [], "max_price": 700, "enabled": true},
-    {"id": "suiza-austria", "name": "Suiza y Austria", "origins": ["TCI", "MAD"], "destinations": ["ZRH", "GVA", "VIE"],
-     "trip": "rt", "stay": {"type": "nights", "min": 2, "max": 4}, "dates": {"months": 6}, "stops": "any",
-     "weekdays": [], "max_price": null, "enabled": true}
+    {
+      "id": "findes-europa",
+      "name": "Findes en norte Europa",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "OSL",
+        "TOS",
+        "BGO",
+        "CPH",
+        "HEL",
+        "STO",
+        "DUB"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "weekend"
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "direct",
+      "weekdays": [],
+      "max_price": 50.0,
+      "enabled": true
+    },
+    {
+      "id": "argentina",
+      "name": "Sudámerica",
+      "origins": [
+        "MAD",
+        "BCN"
+      ],
+      "destinations": [
+        "BUE",
+        "RIO",
+        "SAO",
+        "REC",
+        "PUQ",
+        "SCL",
+        "LIM",
+        "CUZ",
+        "AQP"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 10,
+        "max": 20
+      },
+      "dates": {
+        "months": 9
+      },
+      "stops": "max1",
+      "weekdays": [],
+      "max_price": 700.0,
+      "enabled": true
+    },
+    {
+      "id": "suiza-austria",
+      "name": "Europa largo",
+      "origins": [
+        "MAD",
+        "BCN",
+        "LPA",
+        "TCI"
+      ],
+      "destinations": [
+        "ZRH",
+        "GVA",
+        "REK",
+        "BUH"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 7,
+        "max": 14
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "direct",
+      "weekdays": [],
+      "max_price": null,
+      "enabled": true
+    }
   ]
 }

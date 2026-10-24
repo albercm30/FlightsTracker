@@ -119,7 +119,8 @@
         "KGL",
         "MPM",
         "LBV",
-        "GBE"
+        "GBE",
+        "TNR"
       ],
       "trip": "rt",
       "stay": {
@@ -238,6 +239,37 @@
       "stops": "max1",
       "weekdays": [],
       "max_price": 550.0,
+      "enabled": true
+    },
+    {
+      "id": "africa-cultural",
+      "name": "Africa (cultural)",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "DKR",
+        "NKC",
+        "SID",
+        "RAI",
+        "BVC",
+        "ADD"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 6,
+        "max": 15
+      },
+      "dates": {
+        "months": 6
+      },
+      "stops": "any",
+      "weekdays": [],
+      "max_price": null,
       "enabled": true
     }
   ]

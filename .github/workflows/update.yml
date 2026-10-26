@@ -1,4 +1,4 @@
-# Actualiza tus vuelos cada mañana (gratis, en GitHub):
+# Actualiza tus vuelos cada mañana automáticamente (gratis, en GitHub):
 #   1) busca los precios de todos tus seguimientos (config.json)
 #   2) detecta chollos top y te avisa por email
 #   3) publica la web en https://<usuario>.github.io/<repositorio>/
@@ -6,10 +6,15 @@ name: Actualizar vuelos
 
 on:
   schedule:
-    # GitHub usa hora UTC: se lanza a las 5:40 y 6:40 UTC y solo sigue la que cae a las 7:40 en Madrid
-    # (así funciona en horario de verano e invierno). La web y los avisos están listos sobre las 8:00.
-    - cron: "40 5 * * *"
-    - cron: "40 6 * * *"
+    # GitHub usa hora UTC y a veces retrasa las ejecuciones programadas (hasta 1 h o más).
+    # Por eso se programa varias veces: la primera que llega a partir de las 7:00 de Madrid
+    # hace la búsqueda del día y las demás se saltan. Funciona en horario de verano e invierno.
+    - cron: "5 5 * * *"
+    - cron: "35 5 * * *"
+    - cron: "5 6 * * *"
+    - cron: "35 6 * * *"
+    - cron: "15 8 * * *"
+    - cron: "15 11 * * *"
   workflow_dispatch:
     inputs:
       test_alert:
@@ -24,6 +29,7 @@ permissions:
   contents: read
   issues: write      # el aviso de chollos se publica como issue y GitHub te lo manda por email
   pages: write
+  actions: write     # para que GitHub no apague la ejecución diaria tras 60 días sin cambios
   id-token: write
 
 concurrency:
@@ -43,13 +49,29 @@ jobs:
       GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
       GITHUB_TOKEN: ${{ github.token }}
     steps:
-      - name: ¿Es la hora? (7:40 en Madrid)
-        id: gate
+      - name: ¿Toca buscar? (desde las 7:00 de Madrid, una vez al día)
+        id: when
         run: |
-          if [ "${{ github.event_name }}" != "schedule" ] || [ "$(TZ=Europe/Madrid date +%H)" = "07" ]; then
+          echo "day=$(TZ=Europe/Madrid date +%Y%m%d)" >> "$GITHUB_OUTPUT"
+          echo "hour=$(TZ=Europe/Madrid date +%-H)" >> "$GITHUB_OUTPUT"
+      - name: ¿Ya se ha buscado hoy?
+        id: done
+        if: github.event_name == 'schedule'
+        uses: actions/cache/restore@v4
+        with:
+          path: .done
+          key: ft7-done-${{ steps.when.outputs.day }}
+          lookup-only: true
+      - id: gate
+        run: |
+          if [ "${{ github.event_name }}" != "schedule" ]; then
             echo "run=true" >> "$GITHUB_OUTPUT"
+          elif [ "${{ steps.done.outputs.cache-hit }}" = "true" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "Hoy ya se ha buscado."
+          elif [ "${{ steps.when.outputs.hour }}" -lt 7 ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"; echo "Aún no son las 7:00 en Madrid."
           else
-            echo "run=false" >> "$GITHUB_OUTPUT"; echo "Ahora no toca (cambio de hora): la otra ejecución de hoy es la buena."
+            echo "run=true" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@v4
         if: steps.gate.outputs.run == 'true'
@@ -76,6 +98,20 @@ jobs:
         with:
           path: data/flights.db
           key: ft7-db-${{ github.run_id }}
+      - name: Marcar que hoy ya se ha buscado
+        if: success() && steps.gate.outputs.run == 'true' && github.event_name == 'schedule'
+        run: echo "${{ steps.when.outputs.day }}" > .done
+      - if: success() && steps.gate.outputs.run == 'true' && github.event_name == 'schedule'
+        uses: actions/cache/save@v4
+        with:
+          path: .done
+          key: ft7-done-${{ steps.when.outputs.day }}
+      - name: Mantener activa la ejecución diaria
+        if: steps.gate.outputs.run == 'true' && github.event_name == 'schedule'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X PUT "repos/${{ github.repository }}/actions/workflows/update.yml/enable"
       - uses: actions/upload-pages-artifact@v3
         if: success() && steps.gate.outputs.run == 'true'
         with:

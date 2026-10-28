@@ -323,6 +323,44 @@
       "weekdays": [],
       "max_price": 550.0,
       "enabled": true
+    },
+    {
+      "id": "espana",
+      "name": "España",
+      "origins": [
+        "LPA"
+      ],
+      "destinations": [
+        "MAD",
+        "BCN",
+        "AGP",
+        "PMI",
+        "ALC",
+        "VLC",
+        "SVQ",
+        "BIO",
+        "TCI",
+        "ACE",
+        "IBZ",
+        "SCQ",
+        "OVD",
+        "GRX",
+        "ZAZ",
+        "MAH"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 2,
+        "max": 7
+      },
+      "dates": {
+        "months": 3
+      },
+      "stops": "direct",
+      "weekdays": [],
+      "max_price": 30.0,
+      "enabled": true
     }
   ]
 }

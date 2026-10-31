@@ -328,7 +328,8 @@
       "id": "espana",
       "name": "España",
       "origins": [
-        "MAD"
+        "MAD",
+        "LPA"
       ],
       "destinations": [
         "BCN",
@@ -353,7 +354,7 @@
       },
       "stops": "direct",
       "weekdays": [],
-      "max_price": 30.0,
+      "max_price": 55.0,
       "enabled": true
     }
   ]

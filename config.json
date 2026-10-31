@@ -328,24 +328,18 @@
       "id": "espana",
       "name": "España",
       "origins": [
-        "LPA"
+        "MAD"
       ],
       "destinations": [
-        "MAD",
         "BCN",
         "AGP",
         "PMI",
-        "ALC",
-        "VLC",
         "SVQ",
         "BIO",
-        "TCI",
-        "ACE",
         "IBZ",
         "SCQ",
         "OVD",
         "GRX",
-        "ZAZ",
         "MAH"
       ],
       "trip": "rt",

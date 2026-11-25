@@ -45,11 +45,12 @@ def update(out_dir="site", demo=False, send=True, test_alert=False, today=None):
     store.set("provider", provider.name)
     info = scan.run(provider, store, cfg, today)
     # precios en directo de Google Flights: verifica los mejores y rellena lo que la caché no tiene
-    searcher = None if demo else live.get_searcher(cfg["currency"])
+    searcher, why = (None, "modo demo") if demo else live.get_searcher(cfg["currency"])
     info["live"] = None
+    info["live_off"] = why
     if searcher:
         jobs = live.plan(cfg, store, live.cached_matches(cfg, store, today), today,
-                         int(os.environ.get("LIVE_BUDGET", "600")))
+                         int(os.environ.get("LIVE_BUDGET", "800")))
         info["live"] = live.run(searcher, store, jobs)
     fresh = live.fresh_since(today)
     live_ok = bool(info["live"] and info["live"]["ok"])
@@ -67,6 +68,7 @@ def update(out_dir="site", demo=False, send=True, test_alert=False, today=None):
         if res["count"]:
             store.save_day(w["id"], today.isoformat(), res["min"], res["p10"], res["median"], res["count"])
         res["history"] = store.history(w["id"])[-120:]
+        res["live_progress"] = live.progress(w, store, today) if info["live"] is not None else None
         results[w["id"]] = res
     sent = {"sent": False}
     if send or test_alert:
@@ -99,7 +101,7 @@ def update(out_dir="site", demo=False, send=True, test_alert=False, today=None):
              f"**tiempo:** {info['seconds']} s · **chollos top:** {b['top_deals']} · **aviso:** {sent}", ""]
     lv = info["live"]
     if lv is None:
-        lines += ["**Google Flights (en directo):** desactivado" + (" (modo demo)" if demo else ""), ""]
+        lines += [f"**Google Flights (en directo):** ⚠️ no funciona: {info.get('live_off')}", ""]
     else:
         lines += [f"**Google Flights (en directo):** {lv['ok']}/{lv['planned']} búsquedas OK · {lv['found']} con vuelos · "
                   f"{lv['none']} sin vuelos · {lv['failed']} fallos · {lv['seconds']} s"

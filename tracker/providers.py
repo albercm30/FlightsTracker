@@ -43,6 +43,8 @@ class Travelpayouts:
         r = self.http.get(API_URL, params=params, headers={"X-Access-Token": self.token}, timeout=self.timeout)
         if r.status_code == 401:
             raise ProviderError("Token de Travelpayouts no válido (401)")
+        if r.status_code == 400:   # Travelpayouts no conoce esa ruta/código (p. ej. aeropuertos nuevos)
+            raise ProviderError(f"Travelpayouts no tiene la ruta {origin}→{destination} (se busca solo en Google Flights)")
         if r.status_code == 429:
             raise ProviderError("Límite de peticiones de Travelpayouts (429)")
         r.raise_for_status()

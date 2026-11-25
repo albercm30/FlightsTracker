@@ -8,7 +8,7 @@ rangos cortos suele no tener nada. Por eso, cada mañana se consulta Google Flig
   3. **Sondear** las rutas sin ningún precio en caché.
 
 Se usa la librería «fast-flights» (lee la misma página que ves en google.com/travel/flights). No necesita
-clave. Hay un tope diario de búsquedas (LIVE_BUDGET, 600 por defecto); lo que no cabe hoy se busca mañana
+clave. Hay un tope diario de búsquedas (LIVE_BUDGET, 800 por defecto); lo que no cabe hoy se busca mañana
 (se busca primero lo que lleva más días sin comprobar). Un precio en directo vale 5 días.
 """
 import logging
@@ -56,7 +56,7 @@ class GoogleFlights:
         try:
             import fast_flights  # noqa: F401
         except ImportError as e:  # pragma: no cover - en GitHub se instala con requirements.txt
-            raise LiveError("Falta la librería fast-flights") from e
+            raise LiveError(f"No se pudo cargar fast-flights: {e}") from e
         self.currency = currency.upper()
 
     def search(self, origin, destination, dep, ret=None, max_stops=None):
@@ -136,6 +136,41 @@ def _dep_days(w, start, end, step=1):
     return out
 
 
+def narrow_combos(w, today):
+    """Todas las búsquedas de un seguimiento de fechas concretas: cada día de salida × cada nº de noches ×
+    cada origen × cada destino. Vacío si el rango de salida es largo (> NARROW_DAYS)."""
+    start, end = cfgmod.window(w, today)
+    if start > end or (end - start).days > NARROW_DAYS:
+        return []
+    ms = MAX_STOPS[w["stops"]]
+    st = w["stay"]
+    if w["trip"] != "rt":
+        nights = [None]
+    elif st["type"] == "nights":
+        nights = list(range(st["min"], st["max"] + 1))     # todas: 12, 13, 14, 15, 16…
+    else:
+        nights = _nights_options(st)
+    out = []
+    # orden: primero todos los destinos de la primera fecha, luego la siguiente… (así cada día se ve algo de todo)
+    for o in w["origins"]:
+        for d in _dep_days(w, start, end):
+            for n in nights:
+                ret = (d + timedelta(days=n)).isoformat() if n is not None else None
+                for dst in w["destinations"]:
+                    if o != dst:
+                        out.append((o, dst, d.isoformat(), ret, ms))
+    return out
+
+
+def progress(w, store, today):
+    """(comprobadas en los últimos días, total) de un seguimiento de fechas concretas."""
+    combos = narrow_combos(w, today)
+    if not combos:
+        return None
+    fresh = store.live_checked_since(fresh_since(today))
+    return {"done": sum(1 for k in combos if k in fresh), "total": len(combos)}
+
+
 def plan(cfg, store, cached, today, budget):
     """Lista de búsquedas para hoy, por prioridad: verificar > fechas concretas > rutas sin datos.
 
@@ -165,13 +200,7 @@ def plan(cfg, store, cached, today, budget):
                 break
         # 2) seguimientos de fechas concretas: todas las combinaciones (rotando lo menos reciente)
         if (end - start).days <= NARROW_DAYS:
-            for d in _dep_days(w, start, end):
-                for n in (_nights_options(w["stay"]) if rt else [None]):
-                    ret = (d + timedelta(days=n)).isoformat() if n is not None else None
-                    for o in w["origins"]:
-                        for dst in w["destinations"]:
-                            if o != dst:
-                                narrow.append((o, dst, d.isoformat(), ret, ms))
+            narrow += narrow_combos(w, today)
         # 3) rutas sin ningún precio: una fecha de prueba (cambia cada día)
         else:
             days = _dep_days(w, start, end) or [start]
@@ -199,7 +228,7 @@ def plan(cfg, store, cached, today, budget):
     return out
 
 
-def run(searcher, store, jobs, workers=3, pause=1.5):
+def run(searcher, store, jobs, workers=4, pause=1.5):
     """Lanza las búsquedas. Guarda cada resultado (también «sin vuelos») con la fecha de comprobación."""
     stats = {"planned": len(jobs), "ok": 0, "found": 0, "none": 0, "failed": 0, "stopped": False, "errors": []}
     lock = threading.Lock()
@@ -257,10 +286,11 @@ def fresh_since(today):
 
 
 def get_searcher(currency="eur"):
+    """(buscador, motivo si no hay buscador)."""
     if os.environ.get("LIVE_PRICES", "1") != "1":
-        return None
+        return None, "desactivado (LIVE_PRICES=0)"
     try:
-        return GoogleFlights(currency)
+        return GoogleFlights(currency), None
     except LiveError as e:
         log.warning("Sin precios en directo: %s", e)
-        return None
+        return None, str(e)

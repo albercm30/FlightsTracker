@@ -123,7 +123,7 @@ function emptyWatch(w, s) {
   const cov = s.coverage || {};
   const narrow = s.window && (d8(s.window[1]) - d8(s.window[0])) / 864e5 < 21;
   const why = !cov.offers
-    ? 'Todavía no hay precios para estas rutas y fechas. Cada mañana se buscan en directo en Google Flights (hasta 600 búsquedas al día, empezando por lo que lleva más tiempo sin comprobar), así que en 1–3 días deberían ir apareciendo.'
+    ? 'Todavía no hay precios para estas rutas y fechas. Cada mañana se buscan en directo en Google Flights (hasta 800 búsquedas al día, empezando por lo que lleva más tiempo sin comprobar), así que en 1–3 días deberían ir apareciendo.'
     : `Hay ${cov.offers.toLocaleString('es-ES')} precios guardados para estas rutas, pero ninguno encaja a la vez con tus fechas, noches y escalas${narrow ? ' (tu rango de salida es muy corto)' : ''}.`;
   return `<div class="card empty sec"><div class="big">🔎</div><b>Sin precios que encajen todavía</b><div class="small" style="margin-top:6px;max-width:640px;margin-inline:auto">${why} Se vuelve a buscar cada mañana.</div></div>
     ${(s.nearby || []).length ? `<section class="sec"><div class="sec-h"><h2>🔁 Lo más parecido que hay</h2><span class="tiny muted">±14 días y ±3 noches</span></div><div class="list">${s.nearby.map(offerRow).join('')}</div></section>` : ''}
@@ -227,6 +227,7 @@ VIEWS.home = (app) => {
   const dests = {}; ws.forEach((w) => (w.summary.destinations || []).forEach((d) => { if (!dests[d.code] || d.price < dests[d.code].price) dests[d.code] = d; }));
   const hour = new Date().getHours(), hi = hour < 13 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
   app.innerHTML = `
+    ${s.provider !== 'demo' && s.scan && !s.scan.live && s.scan.live_off ? `<div class="banner warn">⚠️ <b>Google Flights en directo no está funcionando:</b> ${esc(s.scan.live_off)}. Se muestran precios de la caché, sin verificar.</div>` : ''}
     ${s.scan && s.scan.live && s.scan.live.planned && !s.scan.live.ok ? `<div class="banner warn">⚠️ <b>Hoy no se ha podido consultar Google Flights</b> (${esc((s.scan.live.errors || [])[0] || 'error')}). Se muestran precios de la caché, sin verificar.</div>` : ''}
     ${s.provider === 'demo' ? `<div class="banner warn">🎲 <b>Precios simulados.</b> Para precios reales añade el secret <code>TRAVELPAYOUTS_TOKEN</code> en tu repositorio (ver README).</div>` : ''}
     <section class="hero"><h1>${hi} ✈️ <span class="grad-text">${s.top_deals.length ? `${s.top_deals.length} chollo${s.top_deals.length > 1 ? 's' : ''} top hoy` : 'tus vuelos de hoy'}</span></h1>
@@ -277,7 +278,7 @@ VIEWS.watch = (app, id) => {
       <div class="chips"><span class="chip brand">${w.origins.map((o) => `${flag(cc(o))} ${esc(o)}`).join(' ')} → ${w.destinations.map((d) => esc(d)).join(', ')}</span>
         <span class="chip">${w.trip === 'rt' ? 'Ida y vuelta' : 'Solo ida'}</span>${w.trip === 'rt' ? `<span class="chip">🌙 ${stayTxt(w.stay)}</span>` : ''}
         <span class="chip">📅 ${datesTxt(w.dates)}</span><span class="chip">${stopsPref[w.stops]}</span>
-        ${w.weekdays.length ? `<span class="chip">Salida: ${w.weekdays.map((d) => DAYS[d]).join(', ')}</span>` : ''}${w.max_price ? `<span class="chip">🎯 ≤ ${money(w.max_price)}</span>` : ''}</div></div>
+        ${w.weekdays.length ? `<span class="chip">Salida: ${w.weekdays.map((d) => DAYS[d]).join(', ')}</span>` : ''}${w.max_price ? `<span class="chip">🎯 ≤ ${money(w.max_price)}</span>` : ''}${s.live_progress ? `<span class="chip ${s.live_progress.done >= s.live_progress.total ? 'good' : ''}" title="Combinaciones (origen, destino, ida, vuelta) comprobadas en Google Flights en los últimos días">🔴 En directo: ${s.live_progress.done.toLocaleString('es-ES')}/${s.live_progress.total.toLocaleString('es-ES')} comprobadas</span>` : ''}</div></div>
       <a class="btn" href="#config/${esc(w.id)}">✎ Editar</a></div>
     ${!s.count ? emptyWatch(w, s) : `
     <div class="kpis">

@@ -67,6 +67,15 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(len(nxt), 36 - 10)   # la verificada también era una de las 36
         self.assertFalse(set(jobs) & set(nxt))
 
+    def test_every_night_in_range_and_progress(self):
+        w = dict(VERANO, origins=["MAD"], destinations=["SCL"], stay={"type": "nights", "min": 12, "max": 16})
+        cfg = config.clean({"watches": [w]})
+        combos = live.narrow_combos(cfg["watches"][0], TODAY)
+        self.assertEqual(len(combos), 3 * 5)                       # 3 días × 12..16 noches
+        self.assertIn(("MAD", "SCL", "2027-07-09", "2027-07-24", 1), combos)   # 15 noches
+        live.run(FakeGoogle(), self.store, combos[:6], workers=1, pause=0)
+        self.assertEqual(live.progress(cfg["watches"][0], self.store, TODAY), {"done": 6, "total": 15})
+
     def test_stops_after_repeated_failures(self):
         jobs = live.plan(self.cfg, self.store, {}, TODAY, 1000)
         g = FakeGoogle(fail=True)
@@ -124,7 +133,7 @@ class EndToEndLiveTest(unittest.TestCase):
             empty = type("Empty", (), {"name": "travelpayouts", "month": lambda self, *a, **k: []})()
             with mock.patch.dict(os.environ, env), mock.patch.object(config, "CONFIG_FILE", cfgp), \
                     mock.patch.object(cli, "get_provider", lambda token: empty), \
-                    mock.patch.object(live, "get_searcher", lambda cur: fake), \
+                    mock.patch.object(live, "get_searcher", lambda cur: (fake, None)), \
                     mock.patch.object(live, "run", lambda s, st, jobs: _run_fast(s, st, jobs)), \
                     mock.patch.object(alerts, "send", lambda deals, *a, **k: sent.append(deals) or {"sent": True}):
                 out = os.path.join(tmp, "site")

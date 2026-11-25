@@ -47,9 +47,9 @@ A partir de ahí se actualiza sola **cada mañana a las 8:00 (hora de Madrid)**.
 ## De dónde salen los precios
 
 1. **Travelpayouts (Aviasales):** precios que otros usuarios han buscado hace poco. Cubre muchas fechas de golpe, pero para fechas lejanas o rangos cortos (p. ej. «salir del 9 al 11 de julio») muchas veces no tiene nada.
-2. **Google Flights en directo** (librería [fast-flights](https://github.com/AWeirdDev/flights), sin clave): cada mañana, hasta 600 búsquedas para
+2. **Google Flights en directo** (librería [fast-flights](https://github.com/AWeirdDev/flights), sin clave): cada mañana, hasta 800 búsquedas para
    - **verificar** los 5 más baratos de cada seguimiento,
-   - **rellenar** los seguimientos de fechas concretas (rango de salida ≤ 45 días), fecha a fecha,
+   - **rellenar** los seguimientos de fechas concretas (rango de salida ≤ 45 días): cada día de salida con cada nº de noches,
    - **sondear** rutas sin ningún precio.
    
    Lo que no cabe en un día se busca al siguiente; un precio en directo vale 5 días.

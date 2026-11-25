@@ -3,7 +3,7 @@
   "alerts": {
     "min_discount": 35,
     "min_score": 85,
-    "cooldown_days": 14
+    "cooldown_days": 30
   },
   "watches": [
     {
@@ -22,7 +22,8 @@
         "CPH",
         "HEL",
         "STO",
-        "DUB"
+        "DUB",
+        "RVN"
       ],
       "trip": "rt",
       "stay": {
@@ -65,7 +66,7 @@
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 500.0,
+      "max_price": 600.0,
       "enabled": true
     },
     {
@@ -90,11 +91,11 @@
         "max": 14
       },
       "dates": {
-        "months": 6
+        "months": 3
       },
       "stops": "direct",
       "weekdays": [],
-      "max_price": 50.0,
+      "max_price": 60.0,
       "enabled": true
     },
     {
@@ -133,7 +134,7 @@
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 400.0,
+      "max_price": 500.0,
       "enabled": true
     },
     {
@@ -157,11 +158,11 @@
         "max": 14
       },
       "dates": {
-        "months": 6
+        "months": 9
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 400.0,
+      "max_price": 450.0,
       "enabled": true
     },
     {
@@ -194,11 +195,11 @@
         "max": 15
       },
       "dates": {
-        "months": 6
+        "months": 9
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 400.0,
+      "max_price": 450.0,
       "enabled": true
     },
     {
@@ -234,7 +235,7 @@
         "max": 20
       },
       "dates": {
-        "months": 6
+        "months": 9
       },
       "stops": "max1",
       "weekdays": [],
@@ -265,11 +266,11 @@
         "max": 15
       },
       "dates": {
-        "months": 6
+        "months": 9
       },
-      "stops": "any",
+      "stops": "max1",
       "weekdays": [],
-      "max_price": 250.0,
+      "max_price": 200.0,
       "enabled": true
     },
     {
@@ -302,12 +303,12 @@
       },
       "stops": "direct",
       "weekdays": [],
-      "max_price": 55.0,
+      "max_price": 40.0,
       "enabled": true
     },
     {
       "id": "verano",
-      "name": "Verano",
+      "name": "Verano julio",
       "origins": [
         "MAD",
         "LPA",
@@ -394,7 +395,8 @@
         "MPM",
         "GBE",
         "TNR",
-        "NOS"
+        "NOS",
+        "REK"
       ],
       "trip": "rt",
       "stay": {
@@ -413,6 +415,88 @@
         5,
         6
       ],
+      "max_price": 500.0,
+      "enabled": true
+    },
+    {
+      "id": "bucket-paises-total",
+      "name": "BUCKET PAISES TOTAL",
+      "origins": [
+        "MAD",
+        "LPA",
+        "BCN",
+        "TCI"
+      ],
+      "destinations": [
+        "REK",
+        "CPT",
+        "JNB",
+        "DUR",
+        "WDH",
+        "ZNZ",
+        "JRO",
+        "DAR",
+        "EBB",
+        "RIO",
+        "SAO",
+        "SSA",
+        "REC",
+        "FOR",
+        "FLN",
+        "BSB",
+        "IGU",
+        "BUE",
+        "BRC",
+        "MDZ",
+        "IGR",
+        "USH",
+        "FTE",
+        "LIM",
+        "CUZ",
+        "AQP",
+        "SCL",
+        "PUQ",
+        "IPC",
+        "UIO",
+        "GYE",
+        "GPS",
+        "BOG",
+        "MDE",
+        "CTG",
+        "CLO",
+        "ADZ",
+        "VVI",
+        "LPB",
+        "CCS",
+        "PMV",
+        "SJO",
+        "LIR",
+        "DPS",
+        "JKT",
+        "LOP",
+        "MLE",
+        "KTM",
+        "RVN",
+        "TNR",
+        "NOS",
+        "KGL",
+        "LBV",
+        "ULN",
+        "FRU",
+        "GBE",
+        "MPM"
+      ],
+      "trip": "rt",
+      "stay": {
+        "type": "nights",
+        "min": 7,
+        "max": 24
+      },
+      "dates": {
+        "months": 12
+      },
+      "stops": "max1",
+      "weekdays": [],
       "max_price": 400.0,
       "enabled": true
     }

@@ -1,1 +1,2 @@
 requests>=2.31,<3
+fast-flights @ git+https://github.com/AWeirdDev/flights@5fd011e34da59c7fef4cf7ad9a5571622b70432d

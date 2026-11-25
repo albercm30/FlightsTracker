@@ -65,6 +65,8 @@ def analyze(w: dict, offers: list, history: list, alerts_cfg: dict, today: date 
     res = {"id": w["id"], "window": [start.isoformat(), end.isoformat()], "count": len(cand),
            "min": prices[0] if prices else None, "p10": percentile(prices, 0.1), "median": cur_med,
            "baseline": baseline, "history": history[-120:], "prev_low": prev_low}
+    res["coverage"] = {"offers": len(offers), "destinations": sorted({o["destination"] for o in offers})}
+    res["nearby"] = nearby(w, offers, start, end) if len(cand) < 5 else []
     if not cand:
         res.update(top=[], calendar={}, months={}, destinations=[], origins={}, nights={}, weekdays=[], histogram=[],
                    best=None, trend=None)
@@ -143,6 +145,37 @@ def analyze(w: dict, offers: list, history: list, alerts_cfg: dict, today: date 
     return res
 
 
+def nearby(w: dict, offers: list, start: date, end: date, days: int = 14, extra: int = 3, limit: int = 10):
+    """Cuando un seguimiento no tiene (casi) precios: lo más parecido que sí hay.
+
+    Mismas rutas y escalas, salida hasta ±`days` días fuera del rango y ±`extra` noches de estancia.
+    Uno por destino (el más barato), para enseñar referencias reales en vez de una pantalla vacía.
+    """
+    st = w["stay"]
+    if st["type"] == "weekend":
+        lo, hi = 2, 2
+    elif st["type"] == "long_weekend":
+        lo, hi = 2, 4
+    else:
+        lo, hi = st["min"], st["max"]
+    lo, hi = max(1, lo - extra), hi + extra
+    a, b = start - timedelta(days=days), end + timedelta(days=days)
+    best = {}
+    for o in offers:
+        if not stops_ok(o, w["stops"]):
+            continue
+        d = date.fromisoformat(o["dep"])
+        if not (a <= d <= b):
+            continue
+        n = nights(o)
+        if n is not None and not (lo <= n <= hi):
+            continue
+        k = o["destination"]
+        if k not in best or o["price"] < best[k]["price"]:
+            best[k] = {**o, "nights": n}
+    return sorted(best.values(), key=lambda o: o["price"])[:limit]
+
+
 def is_top(o, w, a, prev_low):
     if w.get("max_price") and o["price"] <= w["max_price"]:
         return "precio objetivo"
@@ -154,9 +187,9 @@ def is_top(o, w, a, prev_low):
     return None
 
 
-def alert_candidate(res: dict, store, w: dict, a: dict, today: date):
+def alert_candidate(res: dict, store, w: dict, a: dict, today: date, require_live: bool = False):
     """La mejor oferta «top» del seguimiento si merece aviso (anti-spam: 1 aviso y luego solo si baja otro 10 %)."""
-    tops = [o for o in res.get("top", []) if o.get("top")]
+    tops = [o for o in res.get("top", []) if o.get("top") and (o.get("live") or not require_live)]
     if not tops:
         return None
     best = min(tops, key=lambda o: o["price"])

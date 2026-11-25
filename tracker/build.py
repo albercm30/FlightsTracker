@@ -6,7 +6,7 @@ import shutil
 import time
 from datetime import date, datetime, timezone
 
-from . import __version__, airports
+from . import __version__, airports, live
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEB = os.path.join(ROOT, "web")
@@ -21,12 +21,13 @@ def _write(path, data):
 
 def _slim(o):
     keys = ("origin", "destination", "dep", "ret", "price", "stops", "airline", "duration", "dep_time", "nights",
-            "score", "discount", "top")
+            "score", "discount", "top", "live")
     return {k: (round(o[k], 3) if k == "discount" else o[k]) for k in keys if o.get(k) is not None}
 
 
 def route_file(origin, destination, trip, offers):
-    """Formato compacto: [días desde base, noches (-1 = solo ida), precio, escalas, aerolínea, duración, hora salida]."""
+    """Formato compacto: [días desde base, noches (-1 = solo ida), precio, escalas, aerolínea, duración, hora salida,
+    verificado en directo (1/0)]."""
     base = min((o["dep"] for o in offers), default=date.today().isoformat())
     b = date.fromisoformat(base)
     als = sorted({o["airline"] or "" for o in offers})
@@ -37,7 +38,7 @@ def route_file(origin, destination, trip, offers):
         n = (date.fromisoformat(o["ret"]) - d).days if o.get("ret") else -1
         t = o.get("dep_time") or ""
         rows.append([(d - b).days, n, round(o["price"]), o["stops"], idx[o["airline"] or ""], o.get("duration") or 0,
-                     int(t[:2]) * 60 + int(t[3:5]) if len(t) >= 5 else -1])
+                     int(t[:2]) * 60 + int(t[3:5]) if len(t) >= 5 else -1, 1 if o.get("live") else 0])
     return {"o": origin, "d": destination, "trip": trip, "base": base, "airlines": als, "rows": rows}
 
 
@@ -51,8 +52,13 @@ def build(out_dir, cfg, store, results, scan_info, provider_name, today=None):
     shutil.copy(os.path.join(DATA, "airports.json"), d("airports.json"))
     _write(d("airlines.json"), airports.AIRLINES)
     route_index = []
-    for r in store.rows("SELECT DISTINCT origin, destination, trip FROM offers ORDER BY origin, destination, trip"):
-        offers = store.offers(r["origin"], r["destination"], r["trip"])
+    fresh = live.fresh_since(today)
+    for r in store.rows("SELECT DISTINCT origin, destination, trip FROM offers UNION "
+                        "SELECT DISTINCT origin, destination, CASE WHEN ret IS NULL THEN 'ow' ELSE 'rt' END FROM live "
+                        "WHERE price IS NOT NULL AND checked >= ? ORDER BY 1, 2, 3", (fresh,)):
+        offers = store.offers(r["origin"], r["destination"], r["trip"], fresh_since=fresh)
+        if not offers:
+            continue
         key = f"{r['origin']}-{r['destination']}-{r['trip']}"
         _write(d("routes", key + ".json"), route_file(r["origin"], r["destination"], r["trip"], offers))
         route_index.append({"o": r["origin"], "d": r["destination"], "trip": r["trip"], "n": len(offers),
@@ -61,7 +67,7 @@ def build(out_dir, cfg, store, results, scan_info, provider_name, today=None):
     for w in cfg["watches"]:
         res = results.get(w["id"]) or {}
         watches.append({**w, "summary": {
-            k: (_slim(v) if k == "best" and v else [_slim(x) for x in v] if k == "top" else
+            k: (_slim(v) if k == "best" and v else [_slim(x) for x in v] if k in ("top", "nearby") else
                 [{**x, "offer": _slim(x["offer"])} for x in v] if k == "destinations" else v)
             for k, v in res.items()}})
     tops = sorted((o | {"watch": w["id"], "watch_name": w["name"]} for w in watches

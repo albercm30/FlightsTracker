@@ -90,6 +90,24 @@ class AnalysisTest(unittest.TestCase):
         self.assertTrue(any(o.get("top") == "precio objetivo" for o in res["top"]))
 
 
+class NearbyTest(unittest.TestCase):
+    def test_narrow_window_shows_similar_dates(self):
+        from tracker import analysis, config
+        w = config.clean_watch({"id": "v", "name": "Verano", "origins": ["MAD"], "destinations": ["SCL", "LIM"],
+                                "trip": "rt", "stay": {"type": "nights", "min": 12, "max": 14},
+                                "dates": {"from": "2027-07-09", "to": "2027-07-11"}, "stops": "max1"})
+        offers = [
+            {"origin": "MAD", "destination": "SCL", "dep": "2027-07-15", "ret": "2027-07-30", "price": 690, "stops": 1},
+            {"origin": "MAD", "destination": "SCL", "dep": "2027-07-16", "ret": "2027-07-29", "price": 650, "stops": 2},
+            {"origin": "MAD", "destination": "LIM", "dep": "2027-09-01", "ret": "2027-09-14", "price": 500, "stops": 0},
+        ]
+        res = analysis.analyze(w, offers, [], {"min_discount": 25, "min_score": 80, "cooldown_days": 14},
+                               date(2026, 11, 25))
+        self.assertEqual(res["count"], 0)
+        self.assertEqual(res["coverage"]["offers"], 3)
+        self.assertEqual([o["price"] for o in res["nearby"]], [690])
+
+
 class ProvidersTest(unittest.TestCase):
     def test_travelpayouts_parse(self):
         payload = {"data": [
@@ -121,7 +139,7 @@ class EndToEndTest(unittest.TestCase):
                 {"name": "Argentina", "origins": ["TCI"], "destinations": ["BUE"], "trip": "rt",
                  "stay": {"type": "nights", "min": 10, "max": 15}, "dates": {"months": 4}, "max_price": 99999}]}, cfgp)
             sent = []
-            env = {"DB_PATH": os.path.join(tmp, "f.db"), "TRAVELPAYOUTS_TOKEN": "", "GITHUB_TOKEN": "",
+            env = {"DB_PATH": os.path.join(tmp, "f.db"), "TRAVELPAYOUTS_TOKEN": "", "GITHUB_TOKEN": "", "LIVE_PRICES": "0",
                    "GMAIL_ADDRESS": "", "GMAIL_APP_PASSWORD": ""}
             with mock.patch.dict(os.environ, env), mock.patch.object(config, "CONFIG_FILE", cfgp), \
                     mock.patch.object(alerts, "send", lambda deals, *a, **k: sent.append(deals) or {"sent": True}):

@@ -42,10 +42,10 @@ async function loadRoute(o, d, trip) {
   const key = `${o}-${d}-${trip}`;
   if (S.routes[key]) return S.routes[key];
   const r = await getJSON(`data/routes/${key}.json`, null);
-  const out = !r ? [] : r.rows.map(([off, n, p, st, al, dur, t]) => {
+  const out = !r ? [] : r.rows.map(([off, n, p, st, al, dur, t, lv]) => {
     const dep = addDays(r.base, off);
     return { origin: o, destination: d, dep, ret: n >= 0 ? addDays(dep, n) : null, nights: n >= 0 ? n : null, price: p, stops: st,
-      airline: r.airlines[al], duration: dur || null, dep_time: t >= 0 ? `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}` : null };
+      airline: r.airlines[al], duration: dur || null, dep_time: t >= 0 ? `${String(Math.floor(t / 60)).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}` : null, live: lv ? 1 : 0 };
   });
   S.routes[key] = out;
   return out;
@@ -104,6 +104,32 @@ function bookLinks(o) {
   };
 }
 
+/* Seguimiento sin precios: explica por qué, enseña lo más parecido y deja comprobarlo en directo */
+function liveSearch(w) {
+  const win = (w.summary || {}).window;
+  if (!win) return '';
+  const dep = win[0];
+  let n = w.stay.type === 'nights' ? w.stay.min : 2;
+  const r = d8(dep); r.setDate(r.getDate() + n);
+  const p2 = (x) => String(x).padStart(2, '0');
+  const ret = w.trip === 'rt' ? `${r.getFullYear()}-${p2(r.getMonth() + 1)}-${p2(r.getDate())}` : null;
+  const o = w.origins[0];
+  return `<div class="card pad sec"><div class="chart-title"><h3>🔴 Comprobar en directo</h3><span class="tiny muted">${esc(o)} · ${fdate(dep)}${ret ? ` → ${fdate(ret)}` : ''}</span></div>
+    <div class="chips">${w.destinations.map((d) => { const L = bookLinks({ origin: o, destination: d, dep, ret });
+      return `<a class="chip" target="_blank" rel="noopener" href="${L['Google Flights']}">${flag(cc(d))} ${esc(city(d))}</a>`; }).join(' ')}</div>
+    <div class="tiny muted" style="margin-top:8px">Abre Google Flights con esa fecha; allí puedes mover fechas y origen.</div></div>`;
+}
+function emptyWatch(w, s) {
+  const cov = s.coverage || {};
+  const narrow = s.window && (d8(s.window[1]) - d8(s.window[0])) / 864e5 < 21;
+  const why = !cov.offers
+    ? 'Todavía no hay precios para estas rutas y fechas. Cada mañana se buscan en directo en Google Flights (hasta 600 búsquedas al día, empezando por lo que lleva más tiempo sin comprobar), así que en 1–3 días deberían ir apareciendo.'
+    : `Hay ${cov.offers.toLocaleString('es-ES')} precios guardados para estas rutas, pero ninguno encaja a la vez con tus fechas, noches y escalas${narrow ? ' (tu rango de salida es muy corto)' : ''}.`;
+  return `<div class="card empty sec"><div class="big">🔎</div><b>Sin precios que encajen todavía</b><div class="small" style="margin-top:6px;max-width:640px;margin-inline:auto">${why} Se vuelve a buscar cada mañana.</div></div>
+    ${(s.nearby || []).length ? `<section class="sec"><div class="sec-h"><h2>🔁 Lo más parecido que hay</h2><span class="tiny muted">±14 días y ±3 noches</span></div><div class="list">${s.nearby.map(offerRow).join('')}</div></section>` : ''}
+    ${liveSearch(w)}`;
+}
+
 /* ---------- navegación ---------- */
 const VIEWS = {};
 function route() {
@@ -129,11 +155,19 @@ function dealCard(o) {
       <span class="chip">${stopsTxt(o.stops)}</span>${o.duration ? `<span class="chip">⏱ ${fdur(o.duration)}</span>` : ''}</div>
   </article>`;
 }
+function liveWhen(o) {
+  const t = typeof o.live === 'string' ? o.live : null;
+  return t && t.slice(0, 10) < S.site.today ? ago(t) : 'hoy';
+}
+function verBadge(o) {
+  return o.live ? `<div class="ver ok" title="Precio comprobado en directo en Google Flights ${liveWhen(o)}">✓ verificado ${liveWhen(o)}</div>`
+    : '<div class="ver" title="Precio de búsquedas recientes en Aviasales; aún sin comprobar en directo">≈ aprox.</div>';
+}
 function offerRow(o) {
   return `<div class="card offer" data-offer='${esc(JSON.stringify(o))}'>${flag(cc(o.destination), true)}
     <div style="min-width:0"><div class="when">${fdate(o.dep)}${o.ret ? ` → ${fdate(o.ret)} <span class="muted small">(${o.nights} noches)</span>` : ' <span class="muted small">solo ida</span>'}</div>
       <div class="small muted">${esc(city(o.origin))} → <b style="color:var(--ink2)">${esc(city(o.destination))}</b> · ${stopsTxt(o.stops)}${o.duration ? ` · ⏱ ${fdur(o.duration)}` : ''}${o.dep_time ? ` · sale ${o.dep_time}` : ''} · ${esc(airline(o.airline))}</div></div>
-    <div><div class="price p">${money(o.price)}</div>${o.score != null ? `<div class="tiny muted" style="text-align:right">${o.discount > 0.04 ? `<span style="color:var(--good);font-weight:700">−${Math.round(o.discount * 100)}%</span> · ` : ''}${o.score}/100</div>` : ''}</div></div>`;
+    <div><div class="price p">${money(o.price)}</div>${verBadge(o)}${o.score != null ? `<div class="tiny muted" style="text-align:right">${o.discount > 0.04 ? `<span style="color:var(--good);font-weight:700">−${Math.round(o.discount * 100)}%</span> · ` : ''}${o.score}/100</div>` : ''}</div></div>`;
 }
 document.addEventListener('click', (e) => {
   const c = e.target.closest('[data-offer]');
@@ -169,7 +203,7 @@ async function openOffer(o) {
       </div>
       <div><div class="chart-title"><h3>Esta ruta en otras fechas</h3><span class="tiny muted">${o.ret ? `misma estancia (${o.nights} n)` : 'solo ida'} · pulsa una barra</span></div><div id="near" class="chart"></div></div>
       <div class="row">${Object.entries(L).map(([k, u], i) => `<a class="btn ${i ? '' : 'primary'}" href="${esc(u)}" target="_blank" rel="noopener">${k} ↗</a>`).join('')}</div>
-      <p class="tiny muted" style="margin:0">Precio visto en búsquedas recientes: compruébalo al reservar. ${S.site.provider === 'demo' ? '<b>Ahora mismo son precios simulados.</b>' : ''}</p>
+      <p class="tiny muted" style="margin:0">${o.live ? `✓ Precio comprobado en directo en Google Flights ${liveWhen(o)} (1 adulto, turista).` : 'Precio visto en búsquedas recientes de Aviasales, aún sin comprobar en directo.'} ${S.site.provider === 'demo' ? '<b>Ahora mismo son precios simulados.</b>' : ''}</p>
     </div>`);
   const all = (await loadRoute(o.origin, o.destination, o.ret ? 'rt' : 'ow')).filter((x) => (o.ret ? x.nights === o.nights : true) && Math.abs(d8(x.dep) - d8(o.dep)) <= 21 * 864e5);
   const best = {}; all.forEach((x) => { if (!best[x.dep] || x.price < best[x.dep].price) best[x.dep] = x; });
@@ -193,6 +227,7 @@ VIEWS.home = (app) => {
   const dests = {}; ws.forEach((w) => (w.summary.destinations || []).forEach((d) => { if (!dests[d.code] || d.price < dests[d.code].price) dests[d.code] = d; }));
   const hour = new Date().getHours(), hi = hour < 13 ? 'Buenos días' : hour < 20 ? 'Buenas tardes' : 'Buenas noches';
   app.innerHTML = `
+    ${s.scan && s.scan.live && s.scan.live.planned && !s.scan.live.ok ? `<div class="banner warn">⚠️ <b>Hoy no se ha podido consultar Google Flights</b> (${esc((s.scan.live.errors || [])[0] || 'error')}). Se muestran precios de la caché, sin verificar.</div>` : ''}
     ${s.provider === 'demo' ? `<div class="banner warn">🎲 <b>Precios simulados.</b> Para precios reales añade el secret <code>TRAVELPAYOUTS_TOKEN</code> en tu repositorio (ver README).</div>` : ''}
     <section class="hero"><h1>${hi} ✈️ <span class="grad-text">${s.top_deals.length ? `${s.top_deals.length} chollo${s.top_deals.length > 1 ? 's' : ''} top hoy` : 'tus vuelos de hoy'}</span></h1>
       <p>Actualizado ${ago(s.generated)} · ${ws.length} seguimientos · ${s.provider === 'demo' ? 'precios simulados' : 'precios reales'}</p></section>
@@ -244,9 +279,9 @@ VIEWS.watch = (app, id) => {
         <span class="chip">📅 ${datesTxt(w.dates)}</span><span class="chip">${stopsPref[w.stops]}</span>
         ${w.weekdays.length ? `<span class="chip">Salida: ${w.weekdays.map((d) => DAYS[d]).join(', ')}</span>` : ''}${w.max_price ? `<span class="chip">🎯 ≤ ${money(w.max_price)}</span>` : ''}</div></div>
       <a class="btn" href="#config/${esc(w.id)}">✎ Editar</a></div>
-    ${!s.count ? '<div class="card empty sec"><div class="big">🔎</div>Aún no hay precios para este seguimiento. Se buscarán en la próxima actualización.</div>' : `
+    ${!s.count ? emptyWatch(w, s) : `
     <div class="kpis">
-      <div class="card kpi"><div class="l">Mejor precio</div><div class="v" style="color:var(--good)">${money(s.min)}</div><div class="d muted">${s.best ? `${fdate(s.best.dep)} · ${esc(city(s.best.destination))}` : ''}</div></div>
+      <div class="card kpi"><div class="l">Mejor precio</div><div class="v" style="color:var(--good)">${money(s.min)}</div><div class="d muted">${s.best ? `${fdate(s.best.dep)} · ${esc(city(s.best.destination))}${s.best.live ? ' · <span style="color:var(--good)">✓ verificado</span>' : ''}` : ''}</div></div>
       <div class="card kpi"><div class="l">Precio habitual</div><div class="v">${money(s.baseline)}</div><div class="d muted">mediana${hist.length >= 3 ? ' de los últimos días' : ''}</div></div>
       <div class="card kpi"><div class="l">Opciones</div><div class="v">${s.count.toLocaleString('es-ES')}</div><div class="d muted">fechas y combinaciones</div></div>
       <div class="card kpi"><div class="l">Desde ayer</div><div class="v" style="color:${s.trend == null || Math.abs(s.trend) < 1 ? 'var(--ink)' : s.trend < 0 ? 'var(--good)' : 'var(--bad)'}">${s.trend == null ? '—' : Math.abs(s.trend) < 1 ? '= igual' : `${s.trend < 0 ? '▼' : '▲'} ${money(Math.abs(s.trend))}`}</div><div class="d muted">precio mínimo</div></div>
@@ -261,7 +296,8 @@ VIEWS.watch = (app, id) => {
       <div class="card pad"><div class="chart-title"><h3>📊 Distribución de precios</h3></div><div id="histo" class="chart"></div></div>
       ${Object.keys(s.origins || {}).length > 1 ? '<div class="card pad"><div class="chart-title"><h3>🛫 Por aeropuerto de salida</h3></div><div id="origs"></div></div>' : ''}
     </div>
-    <section class="sec"><div class="sec-h"><h2>⭐ Mejores opciones</h2></div><div class="list">${(s.top || []).map(offerRow).join('')}</div></section>`}`;
+    <section class="sec"><div class="sec-h"><h2>⭐ Mejores opciones</h2></div><div class="list">${(s.top || []).map(offerRow).join('')}</div></section>
+    ${(s.nearby || []).length ? `<section class="sec"><div class="sec-h"><h2>🔁 En fechas parecidas</h2><span class="tiny muted">pocas opciones con tus fechas exactas</span></div><div class="list">${s.nearby.map(offerRow).join('')}</div></section>` : ''}`}`;
   if (!s.count) return;
   const cal = {}; Object.entries(s.calendar).forEach(([k, v]) => { cal[k] = { p: v.p, top: (s.top || []).some((o) => o.top && o.dep === k) }; });
   Charts.calendar($('#cal'), cal, { fmt: money, onClick: async (iso) => openDay(await watchOffers(w), iso, w.name) });
@@ -515,7 +551,8 @@ $('#theme').onclick = () => {
     const [site, ap, airlines] = await Promise.all([getJSON('data/site.json'), getJSON('data/airports.json'), getJSON('data/airlines.json', {})]);
     S.site = site; S.airlines = airlines; S.countries = ap.countries;
     ap.airports.forEach((a) => { S.ap[a.code] = a; });
-    $('#status').innerHTML = `<b>${site.provider === 'demo' ? '🎲 Simulado' : '✅ Precios reales'}</b><br>actualizado ${ago(site.generated)}`;
+    const lv = site.scan && site.scan.live;
+    $('#status').innerHTML = `<b>${site.provider === 'demo' ? '🎲 Simulado' : '✅ Precios reales'}</b><br>actualizado ${ago(site.generated)}${lv ? `<br>Google Flights: ${lv.found.toLocaleString('es-ES')} verificados${lv.stopped || (!lv.ok && lv.planned) ? ' ⚠️' : ''}` : ''}`;
     route();
   } catch (e) {
     $('#app').innerHTML = `<div class="card empty"><div class="big">🛠️</div><h2>Todavía no hay datos</h2><p>Ejecuta la primera actualización en GitHub → Actions → «Actualizar vuelos» → Run workflow.</p><p class="tiny muted">${esc(e.message)}</p></div>`;

@@ -97,6 +97,8 @@ main { max-width: 1280px; margin: 0 auto; padding: 26px clamp(16px, 4vw, 40px) 9
 .chip.good { background: var(--good-bg); color: var(--good); border-color: transparent; }
 .chip.hot { background: rgba(255, 107, 107, .16); color: var(--hot); border-color: transparent; }
 .chip.brand { background: rgba(124, 92, 255, .18); color: #c4b5fd; border-color: transparent; }
+.whead .chip.brand { white-space: normal; flex-wrap: wrap; border-radius: 14px; max-width: 100%; }
+.whead > div { min-width: 0; }
 :root[data-theme="light"] .chip.brand { color: #6d28d9; }
 .chip .x { cursor: pointer; opacity: .7; margin-left: 2px; border: 0; background: none; padding: 0; font-size: 1rem; line-height: 1; }
 .flag { width: 22px; height: 16px; border-radius: 3px; object-fit: cover; box-shadow: 0 0 0 1px rgba(0, 0, 0, .25); flex: none; }
@@ -231,3 +233,7 @@ input:focus, select:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rg
   .cal { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .cal .d { font-size: .6rem; border-radius: 4px; }
 }
+
+/* precio verificado en directo (Google Flights) vs. aproximado (caché) */
+.ver { font-size: .7rem; font-weight: 700; text-align: right; color: var(--muted); white-space: nowrap; margin: 1px 0 2px; }
+.ver.ok { color: var(--good); }

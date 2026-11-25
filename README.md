@@ -44,6 +44,18 @@ Los gráficos de cada seguimiento son:
 
 A partir de ahí se actualiza sola **cada mañana a las 8:00 (hora de Madrid)**.
 
+## De dónde salen los precios
+
+1. **Travelpayouts (Aviasales):** precios que otros usuarios han buscado hace poco. Cubre muchas fechas de golpe, pero para fechas lejanas o rangos cortos (p. ej. «salir del 9 al 11 de julio») muchas veces no tiene nada.
+2. **Google Flights en directo** (librería [fast-flights](https://github.com/AWeirdDev/flights), sin clave): cada mañana, hasta 600 búsquedas para
+   - **verificar** los 5 más baratos de cada seguimiento,
+   - **rellenar** los seguimientos de fechas concretas (rango de salida ≤ 45 días), fecha a fecha,
+   - **sondear** rutas sin ningún precio.
+   
+   Lo que no cabe en un día se busca al siguiente; un precio en directo vale 5 días.
+
+En la web cada precio lleva **✓ verificado** (comprobado en Google Flights) o **≈ aprox.** (solo caché). Si Google Flights está activo, **los emails solo avisan de precios verificados**. En el resumen de cada ejecución (Actions → «Actualizar vuelos») ves cuántas búsquedas en directo han funcionado.
+
 ## Cambiar lo que vigilo
 
 En la web, pestaña **Configurar**:
@@ -85,6 +97,7 @@ Te llega un email solo cuando un seguimiento tiene un **chollo top**:
 config.json                  tus seguimientos (los cambia la web)
 tracker/                     Python (solo usa «requests»)
   providers.py               Travelpayouts (real) · Demo (simulado)
+  live.py                    Google Flights en directo: verifica y rellena
   scan.py                    descarga en paralelo todas las rutas y meses
   analysis.py                filtros, puntuación, chollos y datos de los gráficos
   alerts.py                  emails de chollos

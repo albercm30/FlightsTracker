@@ -345,7 +345,7 @@
       "trip": "rt",
       "stay": {
         "type": "nights",
-        "min": 13,
+        "min": 12,
         "max": 14
       },
       "dates": {

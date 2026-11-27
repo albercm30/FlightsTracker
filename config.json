@@ -419,8 +419,8 @@
       "enabled": true
     },
     {
-      "id": "bucket-paises-total",
-      "name": "BUCKET PAISES TOTAL",
+      "id": "bucket-paises-total-fuera-eu",
+      "name": "BUCKET PAISES TOTAL (FUERA EU)",
       "origins": [
         "MAD",
         "LPA",
@@ -428,7 +428,6 @@
         "TCI"
       ],
       "destinations": [
-        "REK",
         "CPT",
         "JNB",
         "DUR",
@@ -476,7 +475,6 @@
         "LOP",
         "MLE",
         "KTM",
-        "RVN",
         "TNR",
         "NOS",
         "KGL",
@@ -497,7 +495,7 @@
       },
       "stops": "max1",
       "weekdays": [],
-      "max_price": 400.0,
+      "max_price": 450.0,
       "enabled": true
     }
   ]
